@@ -198,12 +198,23 @@ ip netns exec gre2 iptables -t nat -A POSTROUTING -s 10.23.0.0/24 -j MASQUERADE
 ip netns exec gre1 conntrack -F 2>/dev/null || true
 ip netns exec gre2 conntrack -F 2>/dev/null || true
 
-# Enable accept_local in both namespaces
+# Enable accept_local and disable rp_filter in both namespaces
+# (Required forGRE keepalive reflection when inner IP uses local VIPs or /30s)
 ip netns exec gre1 sysctl net.ipv4.conf.default.accept_local=1
 ip netns exec gre1 sysctl net.ipv4.conf.all.accept_local=1
+ip netns exec gre1 sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null
+ip netns exec gre1 sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
+for dev in gre1 gre11 gre21 gre31; do
+    ip netns exec gre1 sysctl -w net.ipv4.conf.${dev}.rp_filter=0 >/dev/null
+done
 
 ip netns exec gre2 sysctl net.ipv4.conf.default.accept_local=1
 ip netns exec gre2 sysctl net.ipv4.conf.all.accept_local=1
+ip netns exec gre2 sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null
+ip netns exec gre2 sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
+for dev in gre2 gre12 gre22 gre32; do
+    ip netns exec gre2 sysctl -w net.ipv4.conf.${dev}.rp_filter=0 >/dev/null
+done
 
 # Allow VeloCloud Edge traffic (GE1/GE2) across bridge on host
 iptables -I INPUT -i br1 -s 192.168.1.64 -j ACCEPT

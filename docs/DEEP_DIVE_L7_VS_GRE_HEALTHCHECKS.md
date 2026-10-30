@@ -137,7 +137,7 @@ When the remote GRE endpoint (`B`) decapsulates the outer GRE header, it sees an
     IP 172.21.12.162 > 172.21.12.161: GREv0, length 4: gre-proto-0x0
 ```
 
-> **Linux `ip_gre` Note:** Notice that in VeloCloud's implementation, the inner IP header of the keepalive uses the **inner `/30` tunnel IPs** (`172.21.12.162 > 172.21.12.161`) rather than the outer WAN IPs (`192.168.1.240 > 192.168.1.64`). Standard eBPF/XDP GRE keepalive responders that strictly assert `inner_iphdr->saddr == outer_iphdr->daddr` will drop these packets unless that check is relaxed or Linux IP forwarding + `accept_local=1` handles the inner packet reflection.
+> **Linux `ip_gre` Note (VeloCloud vs. Cisco IOS-XE / Catalyst SD-WAN):** Notice that in VeloCloud's implementation, the inner IP header of the keepalive uses the **inner `/30` tunnel IPs** (`172.21.12.162 > 172.21.12.161`), whereas Cisco IOS-XE / Catalyst SD-WAN (`keepalive 10 3`) uses the **outer WAN IPs** (`192.168.1.240 > 192.168.1.64`). `doit.sh` sets both `accept_local=1` and `rp_filter=0` on `gre*` so the Linux kernel reflects both styles without Martian drops. See **[`ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md`](ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md)** for official Zscaler/Cisco/VeloCloud documentation links and cross-vendor lab notes.
 
 ---
 
