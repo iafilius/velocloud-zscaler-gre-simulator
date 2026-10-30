@@ -135,16 +135,16 @@ To terminate all 8 GRE tunnels on a single Linux laptop/server without routing t
 
 ### Simulated Zscaler Endpoints & 8-Tunnel Matrix
 
-| # | Segment | Zscaler Cloud & DC Role | Simulated Zscaler VIP | Namespace | WAN Link | Edge WAN IP | GRE Interface | Simulator Inner IP (/30) | Edge Inner Peer IP | L7 Probe Port |
-| :-: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `192.168.1.240` | `gre1` | `GE1` | `192.168.1.64` | `gre1` | `172.21.12.162/30` | `172.21.12.161` | `7002` |
-| **2** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `192.168.1.241` | `gre2` | `GE1` | `192.168.1.64` | `gre2` | `172.21.12.166/30` | `172.21.12.165` | `7003` |
-| **3** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `192.168.1.240` | `gre1` | `GE2` | `192.168.1.65` | `gre11` | `172.21.12.154/30` | `172.21.12.153` | `7006` |
-| **4** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `192.168.1.241` | `gre2` | `GE2` | `192.168.1.65` | `gre12` | `172.21.12.158/30` | `172.21.12.157` | `7007` |
-| **5** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `192.168.1.242` | `gre1` | `GE1` | `192.168.1.64` | `gre21` | `172.20.67.74/30` | `172.20.67.73` | `7000` |
-| **6** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `192.168.1.243` | `gre2` | `GE1` | `192.168.1.64` | `gre22` | `172.20.67.78/30` | `172.20.67.77` | `7001` |
-| **7** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `192.168.1.242` | `gre1` | `GE2` | `192.168.1.65` | `gre31` | `172.20.67.66/30` | `172.20.67.65` | `7004` |
-| **8** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `192.168.1.243` | `gre2` | `GE2` | `192.168.1.65` | `gre32` | `172.20.67.70/30` | `172.20.67.69` | `7005` |
+| # | Segment | Zscaler Cloud & Role | WAN $\rightarrow$ VIP | NetNS / GRE | Inner `/30` (Edge $\leftrightarrow$ Sim) | L7 Port |
+| :-: | :--- | :--- | :--- | :--- | :--- | :-: |
+| **1** | **Trusted** (`.23.0/24`) | `zscaler.net` **Primary** | `GE1 .64 -> .240` | `gre1` / `gre1` | `172.21.12.161 <-> .162` | `:7002` |
+| **2** | **Trusted** (`.23.0/24`) | `zscaler.net` **Secondary** | `GE1 .64 -> .241` | `gre2` / `gre2` | `172.21.12.165 <-> .166` | `:7003` |
+| **3** | **Trusted** (`.23.0/24`) | `zscaler.net` **Primary** | `GE2 .65 -> .240` | `gre1` / `gre11` | `172.21.12.153 <-> .154` | `:7006` |
+| **4** | **Trusted** (`.23.0/24`) | `zscaler.net` **Secondary** | `GE2 .65 -> .241` | `gre2` / `gre12` | `172.21.12.157 <-> .158` | `:7007` |
+| **5** | **Guest** (`.16.0/24`) | `zscalerbeta.net` **Primary** | `GE1 .64 -> .242` | `gre1` / `gre21` | `172.20.67.73 <-> .74` | `:7000` |
+| **6** | **Guest** (`.16.0/24`) | `zscalerbeta.net` **Secondary** | `GE1 .64 -> .243` | `gre2` / `gre22` | `172.20.67.77 <-> .78` | `:7001` |
+| **7** | **Guest** (`.16.0/24`) | `zscalerbeta.net` **Primary** | `GE2 .65 -> .242` | `gre1` / `gre31` | `172.20.67.65 <-> .66` | `:7004` |
+| **8** | **Guest** (`.16.0/24`) | `zscalerbeta.net` **Secondary** | `GE2 .65 -> .243` | `gre2` / `gre32` | `172.20.67.69 <-> .70` | `:7005` |
 
 ---
 

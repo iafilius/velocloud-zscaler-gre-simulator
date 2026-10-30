@@ -55,16 +55,16 @@ Once running, use these commands to bring individual endpoints or tunnel pools `
 
 Each menu key (`[1]`–`[8]`) controls one specific **unique `(Segment / Zscaler Cloud, Primary/Secondary DC, Edge WAN Interface)` tuple**:
 
-| Menu Key | Network Segment Served | Zscaler Cloud | Datacenter Role (`destId`) | Edge WAN Interface | Outer GRE IP Tuple (`Src -> Dst VIP`) | L7 Probe Socket (`VIP:Port`) | Simulator NetNS & GRE Dev |
-| :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`[1]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Primary DC** (`destId: 0`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.240` | `192.168.1.240:7002` | `netns gre1` / `gre1` |
-| **`[2]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Secondary DC** (`destId: 1`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.241` | `192.168.1.241:7003` | `netns gre2` / `gre2` |
-| **`[3]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Primary DC** (`destId: 0`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.242` | `192.168.1.242:7000` | `netns gre1` / `gre21` |
-| **`[4]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Secondary DC** (`destId: 1`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.243` | `192.168.1.243:7001` | `netns gre2` / `gre22` |
-| **`[5]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Primary DC** (`destId: 0`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.240` | `192.168.1.240:7006` | `netns gre1` / `gre11` |
-| **`[6]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Secondary DC** (`destId: 1`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.241` | `192.168.1.241:7007` | `netns gre2` / `gre12` |
-| **`[7]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Primary DC** (`destId: 0`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.242` | `192.168.1.242:7004` | `netns gre1` / `gre31` |
-| **`[8]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Secondary DC** (`destId: 1`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.243` | `192.168.1.243:7005` | `netns gre2` / `gre32` |
+| Key | Segment | Zscaler Cloud & DC Role | WAN $\rightarrow$ VIP | L7 Socket | NetNS / GRE |
+| :-: | :--- | :--- | :--- | :--- | :--- |
+| **`[1]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Primary (`0`) | `GE1 .64 -> .240` | `.240:7002` | `gre1` / `gre1` |
+| **`[2]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Secondary (`1`) | `GE1 .64 -> .241` | `.241:7003` | `gre2` / `gre2` |
+| **`[3]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Primary (`0`) | `GE1 .64 -> .242` | `.242:7000` | `gre1` / `gre21` |
+| **`[4]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Secondary (`1`) | `GE1 .64 -> .243` | `.243:7001` | `gre2` / `gre22` |
+| **`[5]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Primary (`0`) | `GE2 .65 -> .240` | `.240:7006` | `gre1` / `gre11` |
+| **`[6]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Secondary (`1`) | `GE2 .65 -> .241` | `.241:7007` | `gre2` / `gre12` |
+| **`[7]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Primary (`0`) | `GE2 .65 -> .242` | `.242:7004` | `gre1` / `gre31` |
+| **`[8]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Secondary (`1`) | `GE2 .65 -> .243` | `.243:7005` | `gre2` / `gre32` |
 
 #### Detailed Per-Menu-Item Breakdown
 
