@@ -53,32 +53,85 @@ Once running, use these commands to bring individual endpoints or tunnel pools `
 
 ### Individual Endpoint Control (8 Endpoints Total)
 
+Each menu key (`[1]`–`[8]`) controls one specific **unique `(Segment / Zscaler Cloud, Primary/Secondary DC, Edge WAN Interface)` tuple**:
+
+| Menu Key | Network Segment Served | Zscaler Cloud | Datacenter Role (`destId`) | Edge WAN Interface | Outer GRE IP Tuple (`Src -> Dst VIP`) | L7 Probe Socket (`VIP:Port`) | Simulator NetNS & GRE Dev |
+| :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`[1]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Primary DC** (`destId: 0`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.240` | `192.168.1.240:7002` | `netns gre1` / `gre1` |
+| **`[2]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Secondary DC** (`destId: 1`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.241` | `192.168.1.241:7003` | `netns gre2` / `gre2` |
+| **`[3]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Primary DC** (`destId: 0`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.242` | `192.168.1.242:7000` | `netns gre1` / `gre21` |
+| **`[4]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Secondary DC** (`destId: 1`) | **`GE1`** (`192.168.1.64`) | `.64 -> 192.168.1.243` | `192.168.1.243:7001` | `netns gre2` / `gre22` |
+| **`[5]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Primary DC** (`destId: 0`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.240` | `192.168.1.240:7006` | `netns gre1` / `gre11` |
+| **`[6]`** | **Trusted / Production** (`10.23.0.0/24`) | **`zscaler.net`** | **Secondary DC** (`destId: 1`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.241` | `192.168.1.241:7007` | `netns gre2` / `gre12` |
+| **`[7]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Primary DC** (`destId: 0`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.242` | `192.168.1.242:7004` | `netns gre1` / `gre31` |
+| **`[8]`** | **Guest Segment** (`172.16.0.0/24`) | **`zscalerbeta.net`** | **Secondary DC** (`destId: 1`) | **`GE2`** (`192.168.1.65`) | `.65 -> 192.168.1.243` | `192.168.1.243:7005` | `netns gre2` / `gre32` |
+
+#### Detailed Per-Menu-Item Breakdown
+
 **GE1 Endpoints (VeloCloud Edge WAN1 `192.168.1.64`):**
-- **`[1]`** — Toggle **Prod Primary GE1** (`192.168.1.240:7002` in `gre1`, tunnel `gre1`)
-- **`[2]`** — Toggle **Prod Secondary GE1** (`192.168.1.241:7003` in `gre2`, tunnel `gre2`)
-- **`[3]`** — Toggle **Guest Primary GE1** (`192.168.1.242:7000` in `gre1`, tunnel `gre21`)
-- **`[4]`** — Toggle **Guest Secondary GE1** (`192.168.1.243:7001` in `gre2`, tunnel `gre22`)
+- **`[1]` — Toggle Prod Primary GE1 (`192.168.1.240:7002` in `gre1`, tunnel `gre1`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscaler.net` — Primary DC** (`destId: 0`, VIP `192.168.1.240`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre1` (`gre1`, inner `/30`: `172.21.12.161` $\leftrightarrow$ `.162`)
+- **`[2]` — Toggle Prod Secondary GE1 (`192.168.1.241:7003` in `gre2`, tunnel `gre2`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscaler.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.241`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre2` (`gre2`, inner `/30`: `172.21.12.165` $\leftrightarrow$ `.166`)
+- **`[3]` — Toggle Guest Primary GE1 (`192.168.1.242:7000` in `gre1`, tunnel `gre21`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Primary DC** (`destId: 0`, VIP `192.168.1.242`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre1` (`gre21`, inner `/30`: `172.20.67.33` $\leftrightarrow$ `.34`)
+- **`[4]` — Toggle Guest Secondary GE1 (`192.168.1.243:7001` in `gre2`, tunnel `gre22`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.243`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre2` (`gre22`, inner `/30`: `172.20.67.37` $\leftrightarrow$ `.38`)
 
 **GE2 Endpoints (VeloCloud Edge WAN2 `192.168.1.65`):**
-- **`[5]`** — Toggle **Prod Primary GE2** (`192.168.1.240:7006` in `gre1`, tunnel `gre11`)
-- **`[6]`** — Toggle **Prod Secondary GE2** (`192.168.1.241:7007` in `gre2`, tunnel `gre12`)
-- **`[7]`** — Toggle **Guest Primary GE2** (`192.168.1.242:7004` in `gre1`, tunnel `gre31`)
-- **`[8]`** — Toggle **Guest Secondary GE2** (`192.168.1.243:7005` in `gre2`, tunnel `gre32`)
+- **`[5]` — Toggle Prod Primary GE2 (`192.168.1.240:7006` in `gre1`, tunnel `gre11`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscaler.net` — Primary DC** (`destId: 0`, VIP `192.168.1.240`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre11`, inner `/30`: `172.21.12.169` $\leftrightarrow$ `.170`)
+- **`[6]` — Toggle Prod Secondary GE2 (`192.168.1.241:7007` in `gre2`, tunnel `gre12`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscaler.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.241`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre12`, inner `/30`: `172.21.12.173` $\leftrightarrow$ `.174`)
+- **`[7]` — Toggle Guest Primary GE2 (`192.168.1.242:7004` in `gre1`, tunnel `gre31`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Primary DC** (`destId: 0`, VIP `192.168.1.242`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre31`, inner `/30`: `172.20.67.41` $\leftrightarrow$ `.42`)
+- **`[8]` — Toggle Guest Secondary GE2 (`192.168.1.243:7005` in `gre2`, tunnel `gre32`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.243`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre32`, inner `/30`: `172.20.67.45` $\leftrightarrow$ `.46`)
 
 Each press cycles the selected endpoint: **`UP` -> `DEGRADED` -> `DOWN` -> `UP`**
 
 ### Automated Failover Scenarios
 
-**Single-Interface Failovers:**
-- **`[p1]`** — Production `GE1` failover (`Primary .240:7002` -> `Secondary .241:7003`)
-- **`[p2]`** — Production `GE2` failover (`Primary .240:7006` -> `Secondary .241:7007`)
-- **`[g1]`** — Guest `GE1` failover (`Primary .242:7000` -> `Secondary .243:7001`)
-- **`[g2]`** — Guest `GE2` failover (`Primary .242:7004` -> `Secondary .243:7005`)
+**Single-Interface Failovers (Primary DC $\rightarrow$ Secondary DC within the same Zscaler Cloud):**
+- **`[p1]` — Trusted / Production `GE1` Failover (`zscaler.net` on WAN1 `192.168.1.64`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Cloud Transition:** **`zscaler.net` Primary DC** (`.240:7002`, tunnel `gre1` in `netns gre1`) degrades & fails $\rightarrow$ traffic shifts to **`zscaler.net` Secondary DC** (`.241:7003`, tunnel `gre2` in `netns gre2`).
+- **`[p2]` — Trusted / Production `GE2` Failover (`zscaler.net` on WAN2 `192.168.1.65`)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Cloud Transition:** **`zscaler.net` Primary DC** (`.240:7006`, tunnel `gre11` in `netns gre1`) degrades & fails $\rightarrow$ traffic shifts to **`zscaler.net` Secondary DC** (`.241:7007`, tunnel `gre12` in `netns gre2`).
+- **`[g1]` — Guest Segment `GE1` Failover (`zscalerbeta.net` on WAN1 `192.168.1.64`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Cloud Transition:** **`zscalerbeta.net` Primary DC** (`.242:7000`, tunnel `gre21` in `netns gre1`) degrades & fails $\rightarrow$ traffic shifts to **`zscalerbeta.net` Secondary DC** (`.243:7001`, tunnel `gre22` in `netns gre2`).
+- **`[g2]` — Guest Segment `GE2` Failover (`zscalerbeta.net` on WAN2 `192.168.1.65`)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Cloud Transition:** **`zscalerbeta.net` Primary DC** (`.242:7004`, tunnel `gre31` in `netns gre1`) degrades & fails $\rightarrow$ traffic shifts to **`zscalerbeta.net` Secondary DC** (`.243:7005`, tunnel `gre32` in `netns gre2`).
 
 **Multi-Interface Failovers:**
-- **`[pa]`** — Production failover on **BOTH** `GE1 + GE2` simultaneously
-- **`[ga]`** — Guest failover on **BOTH** `GE1 + GE2` simultaneously
-- **`[b]`** — **ALL** failovers simultaneously (all 4 pools across `GE1` and `GE2`)
+- **`[pa]` — Trusted / Production Dual-WAN Failover (`zscaler.net` on BOTH `GE1 + GE2` simultaneously)**
+  - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
+  - **Cloud Transition:** Fails over both `GE1` (`gre1 -> gre2`) and `GE2` (`gre11 -> gre12`) from **`zscaler.net` Primary DC (`.240`)** to **`zscaler.net` Secondary DC (`.241`)**.
+- **`[ga]` — Guest Segment Dual-WAN Failover (`zscalerbeta.net` on BOTH `GE1 + GE2` simultaneously)**
+  - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
+  - **Cloud Transition:** Fails over both `GE1` (`gre21 -> gre22`) and `GE2` (`gre31 -> gre32`) from **`zscalerbeta.net` Primary DC (`.242`)** to **`zscalerbeta.net` Secondary DC (`.243`)**.
+- **`[b]` — Full Datacenter Outage Failover (ALL 4 Primary Tunnels across BOTH Clouds & BOTH WANs)**
+  - **Segments Served:** Both Trusted (`10.23.0.0/24`) and Guest (`172.16.0.0/24`)
+  - **Cloud Transition:** Simulates a complete Primary DC outage (`netns gre1`) across **`zscaler.net` (`.240`)** and **`zscalerbeta.net` (`.242`)** on both `GE1` and `GE2`, shifting all 4 active tunnels to their respective **Secondary DCs (`netns gre2`, `.241` & `.243`)**.
 
 Each automated failover executes a 3-phase transition:
 1. Primary endpoint enters **`DEGRADED`** for 3 seconds (delayed `200 OK` responses).

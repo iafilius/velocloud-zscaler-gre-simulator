@@ -202,10 +202,25 @@ One of the most important architectural insights when debugging VeloCloud SD-WAN
 Instead of static `netcat` loops that only ever return `200 OK`, [`zscaler_orchestrator_pyroute2.py`](zscaler_orchestrator_pyroute2.py) provides an interactive terminal dashboard that controls all 8 Zscaler endpoints simultaneously:
 
 - **Direct `setns(CLONE_NEWNET)` thread binding:** Spawns 8 daemon threads in a single Python process. Each thread opens `/var/run/netns/gre1` or `/var/run/netns/gre2` and calls `libc.setns()` via `ctypes` so its listening socket is permanently bound inside the target namespace.
-- **Real-time state control:**
-  - **`[1]`–`[8]`**: Cycle any single endpoint through **`UP`** (`200 OK` immediately) -> **`DEGRADED`** (`200 OK` delayed by `4.0s`, exceeding VeloCloud's `3.0s` RTT threshold) -> **`DOWN`** (`503 Service Unavailable`).
-  - **`[p1]`, `[p2]`, `[g1]`, `[g2]`**: Run an automated 3-stage failover (Primary degrades -> Primary fails -> Secondary takes over) on a single WAN interface.
-  - **`[pa]`, `[ga]`, `[b]`**: Trigger multi-interface or total chaos failovers across both `GE1` and `GE2` simultaneously.
+- **Real-time state control (explicit Segment, Zscaler Cloud & Primary/Secondary DC mapping per menu key):**
+  - **`[1]`–`[8]` (Individual Endpoint Toggles — `UP` $\rightarrow$ `DEGRADED` $\rightarrow$ `DOWN`):**
+    - **`[1]`** (`Prod Primary GE1`): **Trusted Segment (`10.23.0.0/24`)** $\rightarrow$ **`zscaler.net` Primary DC** (`.240:7002`, `netns gre1`, tunnel `gre1` via `GE1 .64`)
+    - **`[2]`** (`Prod Secondary GE1`): **Trusted Segment (`10.23.0.0/24`)** $\rightarrow$ **`zscaler.net` Secondary DC** (`.241:7003`, `netns gre2`, tunnel `gre2` via `GE1 .64`)
+    - **`[3]`** (`Guest Primary GE1`): **Guest Segment (`172.16.0.0/24`)** $\rightarrow$ **`zscalerbeta.net` Primary DC** (`.242:7000`, `netns gre1`, tunnel `gre21` via `GE1 .64`)
+    - **`[4]`** (`Guest Secondary GE1`): **Guest Segment (`172.16.0.0/24`)** $\rightarrow$ **`zscalerbeta.net` Secondary DC** (`.243:7001`, `netns gre2`, tunnel `gre22` via `GE1 .64`)
+    - **`[5]`** (`Prod Primary GE2`): **Trusted Segment (`10.23.0.0/24`)** $\rightarrow$ **`zscaler.net` Primary DC** (`.240:7006`, `netns gre1`, tunnel `gre11` via `GE2 .65`)
+    - **`[6]`** (`Prod Secondary GE2`): **Trusted Segment (`10.23.0.0/24`)** $\rightarrow$ **`zscaler.net` Secondary DC** (`.241:7007`, `netns gre2`, tunnel `gre12` via `GE2 .65`)
+    - **`[7]`** (`Guest Primary GE2`): **Guest Segment (`172.16.0.0/24`)** $\rightarrow$ **`zscalerbeta.net` Primary DC** (`.242:7004`, `netns gre1`, tunnel `gre31` via `GE2 .65`)
+    - **`[8]`** (`Guest Secondary GE2`): **Guest Segment (`172.16.0.0/24`)** $\rightarrow$ **`zscalerbeta.net` Secondary DC** (`.243:7005`, `netns gre2`, tunnel `gre32` via `GE2 .65`)
+  - **`[p1]`, `[p2]`, `[g1]`, `[g2]` (Single-WAN Automated Failovers — Primary DC degrades $\rightarrow$ fails $\rightarrow$ Secondary DC takes over):**
+    - **`[p1]`**: **Trusted Segment (`zscaler.net`)** on **`GE1`** (`Primary .240:7002 [gre1]` $\rightarrow$ `Secondary .241:7003 [gre2]`)
+    - **`[p2]`**: **Trusted Segment (`zscaler.net`)** on **`GE2`** (`Primary .240:7006 [gre11]` $\rightarrow$ `Secondary .241:7007 [gre12]`)
+    - **`[g1]`**: **Guest Segment (`zscalerbeta.net`)** on **`GE1`** (`Primary .242:7000 [gre21]` $\rightarrow$ `Secondary .243:7001 [gre22]`)
+    - **`[g2]`**: **Guest Segment (`zscalerbeta.net`)** on **`GE2`** (`Primary .242:7004 [gre31]` $\rightarrow$ `Secondary .243:7005 [gre32]`)
+  - **`[pa]`, `[ga]`, `[b]` (Multi-Interface / Full Datacenter Failovers):**
+    - **`[pa]`**: **Trusted Segment (`zscaler.net`)** failover on **BOTH `GE1 + GE2`** simultaneously
+    - **`[ga]`**: **Guest Segment (`zscalerbeta.net`)** failover on **BOTH `GE1 + GE2`** simultaneously
+    - **`[b]`**: **Both Segments (`zscaler.net` + `zscalerbeta.net`)** across **BOTH `GE1 + GE2`** simultaneously
   - **`[u]` / `[d]`**: Bring all 8 endpoints `UP` or `DOWN` at once.
   - **`[c]`**: Dynamically adjust the `DEGRADED` delay (e.g., `< 3.0s` for sub-threshold latency testing vs. `> 3.0s` to trigger RTT-based failover).
 
