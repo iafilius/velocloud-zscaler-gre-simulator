@@ -55,19 +55,6 @@ Once running, use these commands to bring individual endpoints or tunnel pools `
 
 Each menu key (`[1]`–`[8]`) controls one specific **unique `(Segment / Zscaler Cloud, Primary/Secondary DC, Edge WAN Interface)` tuple**:
 
-| Key | Segment | Zscaler Cloud & DC Role | WAN $\rightarrow$ VIP | L7 Socket | NetNS / GRE |
-| :-: | :--- | :--- | :--- | :--- | :--- |
-| **`[1]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Primary (`0`) | `GE1 .64 -> .240` | `.240:7002` | `gre1` / `gre1` |
-| **`[2]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Secondary (`1`) | `GE1 .64 -> .241` | `.241:7003` | `gre2` / `gre2` |
-| **`[3]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Primary (`0`) | `GE1 .64 -> .242` | `.242:7000` | `gre1` / `gre21` |
-| **`[4]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Secondary (`1`) | `GE1 .64 -> .243` | `.243:7001` | `gre2` / `gre22` |
-| **`[5]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Primary (`0`) | `GE2 .65 -> .240` | `.240:7006` | `gre1` / `gre11` |
-| **`[6]`** | **Trusted** (`.23.0/24`) | **`zscaler.net`** Secondary (`1`) | `GE2 .65 -> .241` | `.241:7007` | `gre2` / `gre12` |
-| **`[7]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Primary (`0`) | `GE2 .65 -> .242` | `.242:7004` | `gre1` / `gre31` |
-| **`[8]`** | **Guest** (`.16.0/24`) | **`zscalerbeta.net`** Secondary (`1`) | `GE2 .65 -> .243` | `.243:7005` | `gre2` / `gre32` |
-
-#### Detailed Per-Menu-Item Breakdown
-
 **GE1 Endpoints (VeloCloud Edge WAN1 `192.168.1.64`):**
 - **`[1]` — Toggle Prod Primary GE1 (`192.168.1.240:7002` in `gre1`, tunnel `gre1`)**
   - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
