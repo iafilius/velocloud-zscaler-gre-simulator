@@ -100,18 +100,7 @@ Each automated failover executes a 3-phase transition:
 
 ## Endpoint Health States
 
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> UP
-    UP --> DEGRADED : Press [1]-[8] or Failover Step 1
-    DEGRADED --> DOWN : Press [1]-[8] or Failover Step 2
-    DOWN --> UP : Press [1]-[8] or [u] (All UP)
-
-    UP : UP (Healthy)\nHTTP 200 OK ("OK")\nDelay: 0 ms (< 3000 ms threshold)
-    DEGRADED : DEGRADED (High Latency)\nHTTP 200 OK ("DEGRADED")\nDelay: 4000 ms (> 3000 ms threshold)
-    DOWN : DOWN (Outage)\nHTTP 503 Service Unavailable ("DOWN")\nImmediate failure
-```
+![Zscaler L7 Orchestrator State Machine & Automated Failover Timeline](docs/assets/orchestrator-state-failover.png)
 
 ### 1. `UP` (Green)
 - **HTTP Response:** `HTTP/1.1 200 OK` (immediate, `< 1 ms`)
@@ -161,36 +150,7 @@ Guest:
 
 ## Multi-Threaded Namespace Architecture
 
-```mermaid
-flowchart TB
-    MAIN["Main Thread (Interactive CLI)\n- Renders live status dashboard\n- Mutates shared ENDPOINTS[key]['status']\n- Coordinates automated failover threads"]
-
-    subgraph NS1["Linux NetNS: gre1 (Primary DC)"]
-        T1["Thread 1: Prod Pri GE1\nsetns('gre1') -> .240:7002"]
-        T3["Thread 3: Guest Pri GE1\nsetns('gre1') -> .242:7000"]
-        T5["Thread 5: Prod Pri GE2\nsetns('gre1') -> .240:7006"]
-        T7["Thread 7: Guest Pri GE2\nsetns('gre1') -> .242:7004"]
-    end
-
-    subgraph NS2["Linux NetNS: gre2 (Secondary DC)"]
-        T2["Thread 2: Prod Sec GE1\nsetns('gre2') -> .241:7003"]
-        T4["Thread 4: Guest Sec GE1\nsetns('gre2') -> .243:7001"]
-        T6["Thread 6: Prod Sec GE2\nsetns('gre2') -> .241:7007"]
-        T8["Thread 8: Guest Sec GE2\nsetns('gre2') -> .243:7005"]
-    end
-
-    EDGE1["VeloCloud Edge GE1 (192.168.1.64)\nPolls TCP 7000, 7001, 7002, 7003"]
-    EDGE2["VeloCloud Edge GE2 (192.168.1.65)\nPolls TCP 7004, 7005, 7006, 7007"]
-
-    MAIN --> NS1
-    MAIN --> NS2
-    EDGE1 -->|"HTTP GET /vpntest"| T1 & T2 & T3 & T4
-    EDGE2 -->|"HTTP GET /vpntest"| T5 & T6 & T7 & T8
-
-    style MAIN stroke:#3b82f6,stroke-width:2px
-    style NS1 stroke:#10b981,stroke-width:2px
-    style NS2 stroke:#8b5cf6,stroke-width:2px
-```
+![Multi-Threaded Namespace Socket Architecture (pyroute2 + setns)](docs/assets/orchestrator-multithread-setns.png)
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII Thread Architecture Diagram</summary>
@@ -232,29 +192,7 @@ flowchart TB
 
 ## Typical Failover Timeline (Per WAN Interface)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Op as Operator CLI
-    participant Edge as VeloCloud Edge (GE1 .64)
-    participant Pri as Primary DC (gre1 .240:7002)
-    participant Sec as Secondary DC (gre2 .241:7003)
-
-    Note over Edge,Sec: Initial State: Primary UP (Active), Secondary UP (Standby)
-    Edge->>Pri: GET /vpntest (Every 5s)
-    Pri-->>Edge: HTTP 200 OK ("OK", <1ms)
-    Op->>Pri: Trigger [p1] Automated Failover (T+0s)
-    Note over Pri: Phase 1: DEGRADED (+4000ms delay > 3000ms RTT limit)
-    Edge->>Pri: GET /vpntest
-    Pri-->>Edge: HTTP 200 OK ("DEGRADED", after 4.0s -> Timeout!)
-    Note over Pri: Phase 2: DOWN (T+3s)
-    Edge->>Pri: GET /vpntest (Probes 2 & 3 at T+5s, T+10s)
-    Pri-->>Edge: HTTP 503 Service Unavailable ("DOWN")
-    Note over Edge,Sec: 3 Consecutive Failures (T+12s-15s) -> Tunnel Failover!
-    Edge->>Sec: Steer Active GRE Traffic to gre2 (192.168.1.241)
-    Edge->>Sec: GET /vpntest
-    Sec-->>Edge: HTTP 200 OK ("OK", <1ms)
-```
+See the **Automated Failover Sequence (`T+0s` to `T+15s`)** panel in the state machine blueprint above (`docs/assets/orchestrator-state-failover.png`):
 
 1. **`T+0s`**: Operator triggers `[p1]` (or presses `[1]` to set `DEGRADED` / `DOWN`).
 2. **`T+3s`**: Primary endpoint returns `HTTP 503 Service Unavailable`.

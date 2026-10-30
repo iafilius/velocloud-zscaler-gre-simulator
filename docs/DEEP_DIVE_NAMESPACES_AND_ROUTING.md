@@ -30,33 +30,7 @@ If you attempted to configure all 4 IP aliases and all 8 `ip_gre` tunnels direct
 
 To make the isolated namespaces `gre1` and `gre2` reachable on the physical `192.168.1.0/24` network where the VeloCloud Edge's `GE1` (`.64`) and `GE2` (`.65`) ports reside, `mknetns-gre1.sh` builds a Layer 2 software switch (`br1`):
 
-```mermaid
-flowchart TB
-    subgraph HOST["Host Default Network Namespace"]
-        NIC["Physical NIC: enp0s25\n(MAC: AA:BB:CC:DD:EE:FF, no IP)"]
-        BR1["Linux Bridge: br1\n(Clones MAC: AA:BB:CC:DD:EE:FF)\n(Host DHCP IP on 192.168.1.0/24)"]
-        VA1["veth-a1"]
-        VA2["veth-a2"]
-        NIC -->|"Enslaved port"| BR1
-        BR1 --> VA1
-        BR1 --> VA2
-    end
-
-    subgraph NS1["Network Namespace: gre1 (Primary DC)"]
-        VB1["veth-b1\nIPs: 192.168.1.240/24 & 192.168.1.242/24\nDefault GW: 192.168.1.254"]
-    end
-
-    subgraph NS2["Network Namespace: gre2 (Secondary DC)"]
-        VB2["veth-b2\nIPs: 192.168.1.241/24 & 192.168.1.243/24\nDefault GW: 192.168.1.254"]
-    end
-
-    VA1 <-->|"Virtual Ethernet Pipe"| VB1
-    VA2 <-->|"Virtual Ethernet Pipe"| VB2
-
-    style HOST stroke:#3b82f6,stroke-width:2px
-    style NS1 stroke:#10b981,stroke-width:2px
-    style NS2 stroke:#8b5cf6,stroke-width:2px
-```
+![Host Layer 2 Bridge (br1), MAC Cloning & Linux Network Namespaces (gre1 / gre2)](assets/host-bridge-and-netns-topology.png)
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII Bridge & Namespace Diagram</summary>
@@ -145,27 +119,6 @@ Suppose a client in the Guest subnet (`172.16.0.14`) sends a packet through the 
 ```
 
 At step 2, how does the kernel in `gre1` know whether to route `172.16.0.14` back into `gre21` (`GE1`) or `gre31` (`GE2`)?
-
-```mermaid
-flowchart TB
-    subgraph OPT1["Option 1: Static Route per Segment (Default)"]
-        O1_IN["Ingress on gre1 (GE1) or gre11 (GE2)"] --> O1_RT["Single Main Routing Table:\n10.23.0.0/24 -> dev gre1\n172.16.0.0/24 -> dev gre21"]
-        O1_RT --> O1_OUT["Always returns via GE1 (gre1/gre21)\nSimple, but asymmetric if egress used GE2"]
-    end
-
-    subgraph OPT2["Option 2: Stateful CONNMARK Policy Routing"]
-        O2_IN["PREROUTING on gre1/11/21/31:\nCONNMARK --set-mark 1 / 11 / 21 / 31"] --> O2_RET["Reply on veth-b1:\nCONNMARK --restore-mark"]
-        O2_RET --> O2_RULE["ip rule fwmark -> Table 101 / 111 / 121 / 131\n100% Symmetric Return on exact ingress GRE tunnel"]
-    end
-
-    subgraph OPT3["Option 3: 8-Namespace 1:1 Isolation"]
-        O3_IN["8 Dedicated Namespaces\n(1 NetNS per GRE Tunnel)"] --> O3_OUT["1 veth + 1 GRE tunnel + 1 default return route\nZero shared routing state (requires 8 VIPs)"]
-    end
-
-    style OPT1 stroke:#3b82f6,stroke-width:2px
-    style OPT2 stroke:#10b981,stroke-width:2px
-    style OPT3 stroke:#8b5cf6,stroke-width:2px
-```
 
 ### Solution Option 1: Static Route per Segment (Default in `doit.sh`)
 ```bash

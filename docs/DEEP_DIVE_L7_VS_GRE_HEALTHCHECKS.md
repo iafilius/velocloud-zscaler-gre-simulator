@@ -13,29 +13,6 @@ This document explains how both mechanisms work under the hood, how VeloCloud dy
 
 ![Outside-the-Tunnel L7 Health Checks vs. Inside-the-Tunnel GRE Monitoring](assets/l7-outside-vs-gre-inside.png)
 
-```mermaid
-flowchart TB
-    subgraph EDGE["VeloCloud SD-WAN Edge Appliance"]
-        L7_PROC["/opt/vc/sbin/l7_health_check.py\n(User-space Python daemon)\nOriginates TCP from 169.254.3.x\nNATted by edged to .64/.65 : dstPort 7000..7007"]
-        EDGED_PROC["edged (Dataplane & GRE Engine)\nEncapsulates into IP Proto 47\nOuter: .64/.65 -> .240..243\nInner: /30 (172.21.12.x / 172.20.67.x)"]
-    end
-
-    subgraph OUTSIDE["(1) OUTSIDE TUNNEL — Standard TCP/HTTP"]
-        WAN_UNDERLAY["WAN Underlay (192.168.1.240..243)\nTCP Ports: 7000..7007\nGET /vpntest HTTP/1.1\nHost: gateway.zscalertwo.net"]
-    end
-
-    subgraph INSIDE["(2) INSIDE TUNNEL — IP Protocol 47 (GREv0)"]
-        GRE_IF["GRE Tunnel Interface (gre1..gre32)\nInner IPs: 172.21.12.162/30, etc.\n- GRE Keepalive (gre-proto-0x0)\n- Steered LAN Traffic (10.23.0.0/24, 172.16.0.0/24)"]
-    end
-
-    L7_PROC -->|"Standard TCP over WAN"| OUTSIDE
-    EDGED_PROC -->|"IP Proto 47 Encapsulated"| INSIDE
-
-    style EDGE stroke:#3b82f6,stroke-width:2px
-    style OUTSIDE stroke:#10b981,stroke-width:2px
-    style INSIDE stroke:#8b5cf6,stroke-width:2px
-```
-
 <details>
 <summary>📟 View Terminal-Friendly ASCII Comparison Diagram</summary>
 
@@ -79,44 +56,17 @@ On the VeloCloud Edge, Layer 7 health checks are driven by `/opt/vc/sbin/l7_heal
 
 1. **Port Pool Allocation (`7000`–`7063`):**
    When CSS L7 Health Checks are enabled, `edged` allocates destination ports out of the range `7000`–`7063` (logged in `/var/log/edged.log` as `[NVS] l7_health_dst_port_int: L7 Health dst ports range 7000--7063`).
-2. **One Port per `(Cloud, Destination DC, WAN Link)` Tuple:**
+2. **One Port per `(Cloud, Destination DC, WAN Link)` Tuple & Linear Tunnel Scaling Law:**
    Each combination of:
-   - **CSS Service / Zscaler Cloud (`nvsLogicalId`)**: Production (`zscaler.net`) vs. Guest (`zscalerbeta.net`)
+   - **CSS Service / Zscaler Cloud (`nvsLogicalId`)**: **1 unique Zscaler Cloud per network segment** — Trusted/Production (`zscaler.net`) vs. Guest (`zscalerbeta.net`)
    - **Datacenter (`destId`)**: `0` (Primary DC) vs. `1` (Secondary DC)
    - **WAN Interface (`linkLogicalId`)**: `GE1` (`192.168.1.64`) vs. `GE2` (`192.168.1.65`)
-   receives its own dedicated port from `7000` to `7007` (4 ports per WAN interface, 4 ports per Zscaler Cloud):
+   receives its own dedicated L7 destination port from `7000` to `7007` (4 ports per WAN interface, 4 ports per Zscaler Cloud) and its own dedicated GRE tunnel (`N_tunnels = S_Segments × W_WANs × 2`):
+   - **Doubling the number of segments (`S`) doubles the total tunnel & L7 probe count** (e.g., `2 -> 4 segments` = `8 -> 16 tunnels`).
+   - **Doubling the number of active WAN interfaces (`W`) doubles the total tunnel & L7 probe count** (e.g., `2 -> 4 WANs` = `8 -> 16 tunnels`).
+   - **Why Unique Outer IP Tuples Prevent Technical Impossibilities on the SD-WAN Appliance:** Standard GREv0 (RFC 2784, `IP Protocol 47` without GRE keys) has no TCP/UDP port numbers. By pairing each segment with a dedicated Zscaler Cloud (`zscaler.net` `.240`/`.241` for Trusted vs. `zscalerbeta.net` `.242`/`.243` for Guest), every single GRE tunnel on the SD-WAN Edge has a **100% unique outer IP 2-tuple `(Edge WAN Source IP, Zscaler Cloud DC VIP)`**, enabling deterministic kernel/dataplane demultiplexing alongside unique L7 TCP probe ports (`7000`–`7007`).
 
-```mermaid
-flowchart LR
-    subgraph EDGE["VeloCloud Edge L7 Prober (l7_health_check.py)"]
-        W1["WAN1: GE1 (192.168.1.64)\n4 Unique Tuple Probes"]
-        W2["WAN2: GE2 (192.168.1.65)\n4 Unique Tuple Probes"]
-    end
-
-    subgraph C_PROD["Zscaler Cloud 1: zscaler.net (Production)"]
-        P_PRI["Primary DC (destId: 0 | VIP .240 | netns gre1)\n- Tuple (Prod, Pri, GE1) -> TCP :7002 (gre1)\n- Tuple (Prod, Pri, GE2) -> TCP :7006 (gre11)"]
-        P_SEC["Secondary DC (destId: 1 | VIP .241 | netns gre2)\n- Tuple (Prod, Sec, GE1) -> TCP :7003 (gre2)\n- Tuple (Prod, Sec, GE2) -> TCP :7007 (gre12)"]
-    end
-
-    subgraph C_GUEST["Zscaler Cloud 2: zscalerbeta.net (Guest)"]
-        G_PRI["Primary DC (destId: 0 | VIP .242 | netns gre1)\n- Tuple (Guest, Pri, GE1) -> TCP :7000 (gre21)\n- Tuple (Guest, Pri, GE2) -> TCP :7004 (gre31)"]
-        G_SEC["Secondary DC (destId: 1 | VIP .243 | netns gre2)\n- Tuple (Guest, Sec, GE1) -> TCP :7001 (gre22)\n- Tuple (Guest, Sec, GE2) -> TCP :7005 (gre32)"]
-    end
-
-    W1 -->|":7002"| P_PRI
-    W1 -->|":7003"| P_SEC
-    W1 -->|":7000"| G_PRI
-    W1 -->|":7001"| G_SEC
-
-    W2 -.->|":7006"| P_PRI
-    W2 -.->|":7007"| P_SEC
-    W2 -.->|":7004"| G_PRI
-    W2 -.->|":7005"| G_SEC
-
-    style EDGE stroke:#3b82f6,stroke-width:2px
-    style C_PROD stroke:#0ea5e9,stroke-width:2px
-    style C_GUEST stroke:#10b981,stroke-width:2px
-```
+![VeloCloud L7 Health Check Port Allocation Matrix (Ports 7000-7007)](assets/l7-port-tuple-matrix.png)
 
 | `dstPort` | `cloud` | `destId` | `nvsIp` (Zscaler VIP) | WAN Link | Simulator Namespace |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -161,21 +111,7 @@ In addition to L7 HTTP probes, GRE tunnels can use **Layer 3 GRE Keepalives** in
 ### How GRE Keepalive Encapsulation Works
 A standard Cisco/VeloCloud GRE keepalive packet is a **GRE-in-GRE** packet generated by the tunnel source (`A`) toward the tunnel destination (`B`), where the **inner IP header has reversed source and destination IPs** (`B -> A`) and an inner GRE protocol type of `0x0000`:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Edge as VeloCloud Edge A (Outer .64 / Inner 172.21.12.161)
-    participant Sim as Zscaler Simulator B (Outer .240 / Inner 172.21.12.162)
-
-    Note over Edge,Sim: Outside-the-Tunnel L7 HTTP Probe (Every ~5s)
-    Edge->>Sim: TCP 192.168.1.64 -> 192.168.1.240:7002 (GET /vpntest)
-    Sim-->>Edge: HTTP/1.1 200 OK ("OK" within 3000ms)
-
-    Note over Edge,Sim: Inside-the-Tunnel L3 GRE Keepalive (IP Proto 47)
-    Edge->>Sim: Outer IP (.64 -> .240) | GRE (0x0800) | Inner IP (.162 -> .161) | Inner GRE (0x0000)
-    Note right of Sim: Linux ip_gre decapsulates outer header,<br/>sees inner dst 172.21.12.161 & routes back!
-    Sim-->>Edge: Outer IP (.240 -> .64) | GRE (0x0000) | Inner IP (.162 -> .161) reflected
-```
+![Cisco/VeloCloud GRE-in-GRE Keepalive Packet Anatomy & Reflection](assets/gre-keepalive-packet-anatomy.png)
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII GRE Keepalive Header Diagram</summary>

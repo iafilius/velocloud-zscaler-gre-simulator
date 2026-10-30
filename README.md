@@ -1,6 +1,6 @@
 # VeloCloud SD-WAN to Zscaler ZIA GRE Tunnel Simulator & L7 Orchestrator
 
-[![Linux Network Namespaces](https://img.shields.io/badge/Linux-Network%20Namespaces%20(netns)-FCC624?logo=linux&logoColor=black)](#1-end-to-end-network-architecture)
+[![Linux Network Namespaces](https://img.shields.io/badge/Linux-Network%20Namespaces%20(netns)-FCC624?logo=linux&logoColor=black)](#1-end-to-end-network-architecture-clouds-scaling-law--unique-tuples)
 [![Python 3 + pyroute2](https://img.shields.io/badge/Python%203-pyroute2%20%2B%20setns()-3776AB?logo=python&logoColor=white)](ORCHESTRATOR_USAGE.md)
 [![VMware VeloCloud SD-WAN](https://img.shields.io/badge/VMware-VeloCloud%20SD--WAN-607078?logo=vmware&logoColor=white)](docs/DEEP_DIVE_L7_VS_GRE_HEALTHCHECKS.md)
 [![Zscaler ZIA](https://img.shields.io/badge/Zscaler-ZIA%208--Tunnel%20GRE-0076CE)](docs/DEEP_DIVE_NAMESPACES_AND_ROUTING.md)
@@ -18,7 +18,7 @@ Using **Linux Network Namespaces (`gre1` and `gre2`)**, a **MAC-preserving Linux
 
 ## Documentation Index
 
-- **[`README.md`](README.md)** — Architecture overview, quick start, setup & teardown, and troubleshooting (this document).
+- **[`README.md`](README.md)** — Architecture overview, SD-WAN GRE scaling law & tuple uniqueness, quick start, setup & teardown, and troubleshooting (this document).
 - **[`ORCHESTRATOR_USAGE.md`](ORCHESTRATOR_USAGE.md)** — Complete guide to the interactive Python CLI tool (`zscaler_orchestrator_pyroute2.py`) for bringing endpoints and tunnels `UP`, `DEGRADED`, and `DOWN`.
 - **[`QUICK_REFERENCE.md`](QUICK_REFERENCE.md)** — Port map (`7000`–`7007`), GRE tunnel matrix (`gre1`–`gre32`), CLI cheat sheet, and validation one-liners.
 - **[`docs/DEEP_DIVE_NAMESPACES_AND_ROUTING.md`](docs/DEEP_DIVE_NAMESPACES_AND_ROUTING.md)** — In-depth explanation of why and how Linux Network Namespaces, `veth` pairs, MAC-preserving bridging, `accept_local=1`, `proxy_arp`, `setns()`, and the 3 return-path routing architectures work.
@@ -27,117 +27,37 @@ Using **Linux Network Namespaces (`gre1` and `gre2`)**, a **MAC-preserving Linux
 
 ---
 
-## 1. End-to-End Network Architecture: Clouds, Primary/Secondary DCs & Unique 3-Tuples
+## 1. End-to-End Network Architecture: Clouds, Scaling Law & Unique Tuples
 
-A production VeloCloud SD-WAN Edge with **2 WAN links (`GE1` and `GE2`)** and **2 Zscaler Clouds / CSS profiles (`Production: zscaler.net` and `Guest: zscalerbeta.net`)** builds **4 GRE connections per WAN interface (8 simultaneous GRE tunnels in total)**.
+### 1A. Segment-to-Cloud Mapping, Linear Scaling Law & GRE Tuple Uniqueness
 
-Every GRE tunnel—and its dedicated L7 HTTP health check port (`7000`–`7007`)—is uniquely defined by the **3-Tuple**:
+![SD-WAN GRE Scaling Law and Endpoint Tuple Uniqueness](docs/assets/scaling-and-tuple-uniqueness.png)
 
-$$\text{Unique Connection Tuple} = (\text{Zscaler Cloud}, \text{Datacenter Role [Primary / Secondary]}, \text{Edge WAN Interface [GE1 / GE2]})$$
+In a multi-segment **VMware VeloCloud SD-WAN** deployment integrated with **Zscaler ZIA**, three architectural rules govern how GRE tunnels (`IP Protocol 47`) and L7 health checks are constructed:
 
-### 1A. Logical Zscaler Cloud & Unique Tuple Hierarchy (4 Tunnels per Segment / 4 per WAN = 8 Total)
+1. **Per Network Segment (`Trusted` / `Guest`), 1 Unique Zscaler Cloud Is Used:**
+   - **Trusted / Production Segment (`10.23.0.0/24`)** connects exclusively to **Zscaler Cloud 1 (`zscaler.net`)** (`Primary VIP: 192.168.1.240`, `Secondary VIP: 192.168.1.241`).
+   - **Guest Segment (`172.16.0.0/24`)** connects exclusively to **Zscaler Cloud 2 (`zscalerbeta.net`)** (`Primary VIP: 192.168.1.242`, `Secondary VIP: 192.168.1.243`).
+2. **Per Active WAN Interface (`GE1` / `GE2`), the Edge Connects to Both Primary and Secondary DCs:**
+   - Every active WAN interface establishes **2 GRE tunnels per Zscaler Cloud**: one to the **Primary DC (`destId: 0`)** and one to the **Secondary DC (`destId: 1`)**.
+3. **Linear Tunnel Scaling Formula:**
+   $$N_{\text{GRE Tunnels}} = S_{\text{Segments (Unique Zscaler Clouds)}} \times W_{\text{Active WAN Interfaces}} \times 2_{\text{ (Primary + Secondary DC)}}$$
+   - **Doubling the number of segments** ($S \to 2S$, each mapped to its own unique Zscaler Cloud) **doubles the total number of GRE tunnels**.
+   - **Doubling the number of active WAN interfaces** ($W \to 2W$) **doubles the total number of GRE tunnels**.
+   - With $S = 2$ segments (`Trusted` + `Guest`) and $W = 2$ WAN links (`GE1` + `GE2`), the Edge builds $2 \times 2 \times 2 = \mathbf{8\text{ GRE tunnels}}$ (4 tunnels per WAN interface, 4 tunnels per segment).
 
-```mermaid
-flowchart LR
-    subgraph EDGE["VeloCloud SD-WAN Edge (2 Segments × 2 WANs = 8 GRE Tunnels)"]
-        subgraph SEG_TRUSTED["Trusted / Production Segment (LAN 10.23.0.0/24)"]
-            T_GE1["VeloCloud-GE1 (192.168.1.64)"]
-            T_GE2["VeloCloud-GE2 (192.168.1.65)"]
-        end
-        subgraph SEG_GUEST["Guest Segment (LAN 172.16.0.0/24)"]
-            G_GE1["VeloCloud-GE1 (192.168.1.64)"]
-            G_GE2["VeloCloud-GE2 (192.168.1.65)"]
-        end
-    end
-
-    subgraph CLOUD_PROD["Zscaler Cloud 1: zscaler.net (Trusted / Production)"]
-        subgraph PROD_PRI["zscaler.net Primary DC (VIP: 192.168.1.240 | netns: gre1)"]
-            T1["1. Trusted - GE1 - zscaler.net Primary\nGRE: gre1 (172.21.12.162/30) | L7: :7002"]
-            T2["3. Trusted - GE2 - zscaler.net Primary\nGRE: gre11 (172.21.12.154/30) | L7: :7006"]
-        end
-        subgraph PROD_SEC["zscaler.net Secondary DC (VIP: 192.168.1.241 | netns: gre2)"]
-            T3["2. Trusted - GE1 - zscaler.net Secondary\nGRE: gre2 (172.21.12.166/30) | L7: :7003"]
-            T4["4. Trusted - GE2 - zscaler.net Secondary\nGRE: gre12 (172.21.12.158/30) | L7: :7007"]
-        end
-    end
-
-    subgraph CLOUD_GUEST["Zscaler Cloud 2: zscalerbeta.net (Guest)"]
-        subgraph GUEST_PRI["zscalerbeta.net Primary DC (VIP: 192.168.1.242 | netns: gre1)"]
-            T5["5. Guest - GE1 - zscalerbeta.net Primary\nGRE: gre21 (172.20.67.74/30) | L7: :7000"]
-            T6["7. Guest - GE2 - zscalerbeta.net Primary\nGRE: gre31 (172.20.67.66/30) | L7: :7004"]
-        end
-        subgraph GUEST_SEC["zscalerbeta.net Secondary DC (VIP: 192.168.1.243 | netns: gre2)"]
-            T7["6. Guest - GE1 - zscalerbeta.net Secondary\nGRE: gre22 (172.20.67.78/30) | L7: :7001"]
-            T8["8. Guest - GE2 - zscalerbeta.net Secondary\nGRE: gre32 (172.20.67.70/30) | L7: :7005"]
-        end
-    end
-
-    T_GE1 -->|"gre1 (:7002)"| T1
-    T_GE1 -->|"gre2 (:7003)"| T3
-    T_GE2 -.->|"gre11 (:7006)"| T2
-    T_GE2 -.->|"gre12 (:7007)"| T4
-
-    G_GE1 -->|"gre21 (:7000)"| T5
-    G_GE1 -->|"gre22 (:7001)"| T7
-    G_GE2 -.->|"gre31 (:7004)"| T6
-    G_GE2 -.->|"gre32 (:7005)"| T8
-
-    style EDGE stroke:#3b82f6,stroke-width:2px
-    style SEG_TRUSTED stroke:#0ea5e9,stroke-width:2px
-    style SEG_GUEST stroke:#10b981,stroke-width:2px
-    style CLOUD_PROD stroke:#0ea5e9,stroke-width:2px
-    style CLOUD_GUEST stroke:#10b981,stroke-width:2px
-    style PROD_PRI stroke:#10b981,stroke-width:2px
-    style GUEST_PRI stroke:#10b981,stroke-width:2px
-    style PROD_SEC stroke:#8b5cf6,stroke-width:2px
-    style GUEST_SEC stroke:#8b5cf6,stroke-width:2px
-```
+> **Why Unique Endpoint Tuples Prevent Any Technical Impossibility on the SD-WAN Appliance:**
+> Standard GREv0 (RFC 2784, without GRE Tunnel Keys) runs directly over IP (**Protocol 47**) and has no TCP/UDP port numbers. On the WAN underlay, a GRE tunnel is uniquely identified by its outer IP 2-tuple:
+> $$\text{GRE Underlay Endpoint Tuple} = (\text{Edge WAN Source IP}, \text{Zscaler Cloud DC VIP})$$
+> If two different segments attempted to terminate keyless GRE tunnels from the same WAN interface (`GE1 = 192.168.1.64`) onto the **same** Zscaler destination VIP (`192.168.1.240`), both tunnels would share the exact same `(Src: .64, Dst: .240, Proto: 47)` header—creating a demultiplexing conflict in the kernel/dataplane.
+>
+> Because **every segment uses its own unique Zscaler Cloud (with distinct Primary and Secondary VIPs)** and **every WAN interface has its own unique IP**, **every single GRE tunnel on the SD-WAN appliance is guaranteed to have a 100% unique `(WAN Source IP, Zscaler Cloud VIP)` endpoint tuple** (plus a dedicated L7 HTTP probe port in `7000`–`7063`). This makes it trivial for the SD-WAN appliance to keep all tunnels cleanly separated without any technical impossibility.
 
 ### 1B. Physical Host Bridge (`br1`) & Linux Network Namespace Mapping (`gre1` vs `gre2`)
 
 To terminate all 8 GRE tunnels on a single Linux laptop/server without routing table collisions (`10.23.0.0/24` and `172.16.0.0/24`) or local IP bypass, the simulator maps **all Primary DCs (`.240` & `.242`) into namespace `gre1`** and **all Secondary DCs (`.241` & `.243`) into namespace `gre2`**, connected via a MAC-preserving Linux Bridge (`br1`):
 
-```mermaid
-flowchart TB
-    subgraph UNDERLAY["Physical LAN / WAN Underlay (192.168.1.0/24)"]
-        EDGE_WAN["VeloCloud Edge WANs: GE1 (.64) & GE2 (.65)"]
-        GW["Upstream Gateway / Internet: 192.168.1.254"]
-    end
-
-    subgraph HOST["Linux Simulator Host (Default Namespace)"]
-        NIC["Physical NIC: enp0s25 (IP flushed)"]
-        BR1["Linux Bridge: br1 (Clones enp0s25 MAC + DHCP IP)"]
-        VA1["veth-a1"]
-        VA2["veth-a2"]
-        NIC --> BR1
-        BR1 --> VA1
-        BR1 --> VA2
-    end
-
-    subgraph NS_GRE1["Network Namespace: gre1 (Hosts BOTH Primary Zscaler DCs)"]
-        VB1["veth-b1"]
-        PRI_C1["Cloud 1 Primary DC (zscaler.net — VIP 192.168.1.240)\n- GE1 Tuple: gre1 (172.21.12.162/30) + L7 :7002\n- GE2 Tuple: gre11 (172.21.12.154/30) + L7 :7006"]
-        PRI_C2["Cloud 2 Primary DC (zscalerbeta.net — VIP 192.168.1.242)\n- GE1 Tuple: gre21 (172.20.67.74/30) + L7 :7000\n- GE2 Tuple: gre31 (172.20.67.66/30) + L7 :7004"]
-        VB1 --> PRI_C1
-        VB1 --> PRI_C2
-    end
-
-    subgraph NS_GRE2["Network Namespace: gre2 (Hosts BOTH Secondary Zscaler DCs)"]
-        VB2["veth-b2"]
-        SEC_C1["Cloud 1 Secondary DC (zscaler.net — VIP 192.168.1.241)\n- GE1 Tuple: gre2 (172.21.12.166/30) + L7 :7003\n- GE2 Tuple: gre12 (172.21.12.158/30) + L7 :7007"]
-        SEC_C2["Cloud 2 Secondary DC (zscalerbeta.net — VIP 192.168.1.243)\n- GE1 Tuple: gre22 (172.20.67.78/30) + L7 :7001\n- GE2 Tuple: gre32 (172.20.67.70/30) + L7 :7005"]
-        VB2 --> SEC_C1
-        VB2 --> SEC_C2
-    end
-
-    EDGE_WAN <-->|"8 GRE Tunnels + 8 L7 Probes"| NIC
-    VA1 <-->|"Virtual Ethernet Pipe"| VB1
-    VA2 <-->|"Virtual Ethernet Pipe"| VB2
-
-    style HOST stroke:#64748b,stroke-width:2px
-    style NS_GRE1 stroke:#10b981,stroke-width:2px
-    style NS_GRE2 stroke:#8b5cf6,stroke-width:2px
-```
+![Physical Host Bridge br1 and Dual Network Namespace Topology](docs/assets/host-bridge-and-netns-topology.png)
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII Topology Diagram</summary>
@@ -213,18 +133,18 @@ flowchart TB
 
 </details>
 
-### Simulated Zscaler Endpoints & Tunnel Matrix
+### Simulated Zscaler Endpoints & 8-Tunnel Matrix
 
-| Endpoint Role | Simulated Zscaler VIP | Namespace | WAN Link | Edge WAN IP | GRE Interface | Simulator Inner IP (/30) | Edge Inner Peer IP | L7 Health Check Port |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Prod Primary (GE1)** | `192.168.1.240` | `gre1` | `GE1` | `192.168.1.64` | `gre1` | `172.21.12.162/30` | `172.21.12.161` | `7002` |
-| **Prod Primary (GE2)** | `192.168.1.240` | `gre1` | `GE2` | `192.168.1.65` | `gre11` | `172.21.12.154/30` | `172.21.12.153` | `7006` |
-| **Prod Secondary (GE1)** | `192.168.1.241` | `gre2` | `GE1` | `192.168.1.64` | `gre2` | `172.21.12.166/30` | `172.21.12.165` | `7003` |
-| **Prod Secondary (GE2)** | `192.168.1.241` | `gre2` | `GE2` | `192.168.1.65` | `gre12` | `172.21.12.158/30` | `172.21.12.157` | `7007` |
-| **Guest Primary (GE1)** | `192.168.1.242` | `gre1` | `GE1` | `192.168.1.64` | `gre21` | `172.20.67.74/30` | `172.20.67.73` | `7000` |
-| **Guest Primary (GE2)** | `192.168.1.242` | `gre1` | `GE2` | `192.168.1.65` | `gre31` | `172.20.67.66/30` | `172.20.67.65` | `7004` |
-| **Guest Secondary (GE1)** | `192.168.1.243` | `gre2` | `GE1` | `192.168.1.64` | `gre22` | `172.20.67.78/30` | `172.20.67.77` | `7001` |
-| **Guest Secondary (GE2)** | `192.168.1.243` | `gre2` | `GE2` | `192.168.1.65` | `gre32` | `172.20.67.70/30` | `172.20.67.69` | `7005` |
+| # | Segment | Zscaler Cloud & DC Role | Simulated Zscaler VIP | Namespace | WAN Link | Edge WAN IP | GRE Interface | Simulator Inner IP (/30) | Edge Inner Peer IP | L7 Probe Port |
+| :-: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `192.168.1.240` | `gre1` | `GE1` | `192.168.1.64` | `gre1` | `172.21.12.162/30` | `172.21.12.161` | `7002` |
+| **2** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `192.168.1.241` | `gre2` | `GE1` | `192.168.1.64` | `gre2` | `172.21.12.166/30` | `172.21.12.165` | `7003` |
+| **3** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `192.168.1.240` | `gre1` | `GE2` | `192.168.1.65` | `gre11` | `172.21.12.154/30` | `172.21.12.153` | `7006` |
+| **4** | **Trusted** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `192.168.1.241` | `gre2` | `GE2` | `192.168.1.65` | `gre12` | `172.21.12.158/30` | `172.21.12.157` | `7007` |
+| **5** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `192.168.1.242` | `gre1` | `GE1` | `192.168.1.64` | `gre21` | `172.20.67.74/30` | `172.20.67.73` | `7000` |
+| **6** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `192.168.1.243` | `gre2` | `GE1` | `192.168.1.64` | `gre22` | `172.20.67.78/30` | `172.20.67.77` | `7001` |
+| **7** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `192.168.1.242` | `gre1` | `GE2` | `192.168.1.65` | `gre31` | `172.20.67.66/30` | `172.20.67.65` | `7004` |
+| **8** | **Guest** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `192.168.1.243` | `gre2` | `GE2` | `192.168.1.65` | `gre32` | `172.20.67.70/30` | `172.20.67.69` | `7005` |
 
 ---
 
@@ -233,35 +153,6 @@ flowchart TB
 One of the most important architectural insights when debugging VeloCloud SD-WAN with Zscaler CSS is understanding that **L7 Health Checks and GRE Tunnel Traffic take two different paths**:
 
 ![Outside-the-Tunnel L7 Health Checks vs. Inside-the-Tunnel GRE Traffic](docs/assets/l7-outside-vs-gre-inside.png)
-
-```mermaid
-flowchart LR
-    subgraph EDGE["VeloCloud SD-WAN Edge (.64 / .65)"]
-        L7_DAEMON["l7_health_check.py (src 169.254.3.x -> NAT to .64/.65)"]
-        EDGED["edged Dataplane (GRE Encapsulation Engine)"]
-    end
-
-    subgraph PATH_A["PATH A: OUTSIDE THE GRE TUNNEL (WAN Underlay TCP)"]
-        TCP_PROBE["Direct TCP to .240..243 : Ports 7000..7007\nGET /vpntest HTTP/1.1\nHost: gateway.zscalertwo.net"]
-    end
-
-    subgraph PATH_B["PATH B: INSIDE THE GRE TUNNEL (IP Protocol 47)"]
-        GRE_PIPE["GREv0 Tunnel Interfaces (gre1..gre32)\n1. L3 GRE Keepalives (gre-proto-0x0)\n2. Backhauled LAN Traffic (10.23.0.0/24, 172.16.0.0/24)"]
-    end
-
-    subgraph SIM["Linux Network Namespace Simulator (gre1 & gre2)"]
-        ORCH["Python Orchestrator Thread (setns)\n- UP: 200 OK (0ms)\n- DEGRADED: 200 OK (+4000ms)\n- DOWN: 503 Unavailable"]
-        KERNEL_GRE["Linux Kernel ip_gre Decapsulation\n-> Namespace Routing Table\n-> iptables MASQUERADE NAT -> Internet"]
-    end
-
-    L7_DAEMON -->|"Bypasses GRE Tunnel"| TCP_PROBE --> ORCH
-    EDGED -->|"Encapsulated Proto 47"| GRE_PIPE --> KERNEL_GRE
-
-    style PATH_A stroke:#10b981,stroke-width:2px
-    style PATH_B stroke:#3b82f6,stroke-width:2px
-    style ORCH stroke:#10b981,stroke-width:2px
-    style KERNEL_GRE stroke:#3b82f6,stroke-width:2px
-```
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII Split-Path Diagram</summary>
@@ -336,16 +227,7 @@ See **[`ORCHESTRATOR_USAGE.md`](ORCHESTRATOR_USAGE.md)** for full dashboard exam
 
 ### Step-by-Step Execution Order
 
-```mermaid
-flowchart LR
-    S1["1. sudo ./mknetns-gre1.sh\n(Bridge br1 + NetNS gre1 & gre2)"] --> S2["2. sudo ./doit.sh\n(VIPs .240-.243 + 8 GRE Tunnels + NAT)"]
-    S2 --> S3["3. sudo ./zscaler_orchestrator_pyroute2.py\n(8 L7 Listeners + Failover CLI)"]
-    S3 --> S4["4. sudo ./cleanup.sh\n(Teardown & Restore NIC)"]
-    style S1 stroke:#3b82f6,stroke-width:2px
-    style S2 stroke:#10b981,stroke-width:2px
-    style S3 stroke:#8b5cf6,stroke-width:2px
-    style S4 stroke:#f59e0b,stroke-width:2px
-```
+![Simulator Lifecycle and 4-Stage Execution Pipeline](docs/assets/execution-workflow-pipeline.png)
 
 <details>
 <summary>📟 View Terminal-Friendly ASCII Execution Flow</summary>
