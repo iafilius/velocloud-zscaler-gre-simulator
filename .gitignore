@@ -1,0 +1,23 @@
+# Runtime and capture artifacts (never commit to public repository)
+*.log
+*.pcap
+*.cap
+*.csv
+*.zip
+MANIFEST.json
+edge_config*.json
+
+# Python / virtualenv artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# Editor backup files
+*~
+*.save*
+*.swp
+DEADJOE
+
