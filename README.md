@@ -35,48 +35,56 @@ Every GRE tunnel—and its dedicated L7 HTTP health check port (`7000`–`7007`)
 
 $$\text{Unique Connection Tuple} = (\text{Zscaler Cloud}, \text{Datacenter Role [Primary / Secondary]}, \text{Edge WAN Interface [GE1 / GE2]})$$
 
-### 1A. Logical Zscaler Cloud & Unique Tuple Hierarchy (4 Tunnels per WAN / 8 Total)
+### 1A. Logical Zscaler Cloud & Unique Tuple Hierarchy (4 Tunnels per Segment / 4 per WAN = 8 Total)
 
 ```mermaid
 flowchart LR
-    subgraph EDGE["VeloCloud SD-WAN Edge (4 Tunnels per WAN Interface)"]
-        GE1["WAN1: GE1 (192.168.1.64)\nOriginates 4 GRE Tunnels + 4 L7 Probes\n(Ports :7002, :7003, :7000, :7001)"]
-        GE2["WAN2: GE2 (192.168.1.65)\nOriginates 4 GRE Tunnels + 4 L7 Probes\n(Ports :7006, :7007, :7004, :7005)"]
-    end
-
-    subgraph CLOUD_PROD["Zscaler Cloud 1: Production (zscaler.net — Segment 10.23.0.0/24)"]
-        subgraph PROD_PRI["Primary DC (destId: 0 | VIP: 192.168.1.240 | netns: gre1)"]
-            T1["Tuple 1: (Prod, Primary, GE1)\nGRE: gre1 (172.21.12.162/30) | L7: :7002"]
-            T2["Tuple 2: (Prod, Primary, GE2)\nGRE: gre11 (172.21.12.154/30) | L7: :7006"]
+    subgraph EDGE["VeloCloud SD-WAN Edge (2 Segments × 2 WANs = 8 GRE Tunnels)"]
+        subgraph SEG_TRUSTED["Trusted / Production Segment (LAN 10.23.0.0/24)"]
+            T_GE1["VeloCloud-GE1 (192.168.1.64)"]
+            T_GE2["VeloCloud-GE2 (192.168.1.65)"]
         end
-        subgraph PROD_SEC["Secondary DC (destId: 1 | VIP: 192.168.1.241 | netns: gre2)"]
-            T3["Tuple 3: (Prod, Secondary, GE1)\nGRE: gre2 (172.21.12.166/30) | L7: :7003"]
-            T4["Tuple 4: (Prod, Secondary, GE2)\nGRE: gre12 (172.21.12.158/30) | L7: :7007"]
+        subgraph SEG_GUEST["Guest Segment (LAN 172.16.0.0/24)"]
+            G_GE1["VeloCloud-GE1 (192.168.1.64)"]
+            G_GE2["VeloCloud-GE2 (192.168.1.65)"]
         end
     end
 
-    subgraph CLOUD_GUEST["Zscaler Cloud 2: Guest (zscalerbeta.net — Segment 172.16.0.0/24)"]
-        subgraph GUEST_PRI["Primary DC (destId: 0 | VIP: 192.168.1.242 | netns: gre1)"]
-            T5["Tuple 5: (Guest, Primary, GE1)\nGRE: gre21 (172.20.67.74/30) | L7: :7000"]
-            T6["Tuple 6: (Guest, Primary, GE2)\nGRE: gre31 (172.20.67.66/30) | L7: :7004"]
+    subgraph CLOUD_PROD["Zscaler Cloud 1: zscaler.net (Trusted / Production)"]
+        subgraph PROD_PRI["zscaler.net Primary DC (VIP: 192.168.1.240 | netns: gre1)"]
+            T1["1. Trusted - GE1 - zscaler.net Primary\nGRE: gre1 (172.21.12.162/30) | L7: :7002"]
+            T2["3. Trusted - GE2 - zscaler.net Primary\nGRE: gre11 (172.21.12.154/30) | L7: :7006"]
         end
-        subgraph GUEST_SEC["Secondary DC (destId: 1 | VIP: 192.168.1.243 | netns: gre2)"]
-            T7["Tuple 7: (Guest, Secondary, GE1)\nGRE: gre22 (172.20.67.78/30) | L7: :7001"]
-            T8["Tuple 8: (Guest, Secondary, GE2)\nGRE: gre32 (172.20.67.70/30) | L7: :7005"]
+        subgraph PROD_SEC["zscaler.net Secondary DC (VIP: 192.168.1.241 | netns: gre2)"]
+            T3["2. Trusted - GE1 - zscaler.net Secondary\nGRE: gre2 (172.21.12.166/30) | L7: :7003"]
+            T4["4. Trusted - GE2 - zscaler.net Secondary\nGRE: gre12 (172.21.12.158/30) | L7: :7007"]
         end
     end
 
-    GE1 -->|"1. Prod Pri"| T1
-    GE1 -->|"2. Prod Sec"| T3
-    GE1 -->|"3. Guest Pri"| T5
-    GE1 -->|"4. Guest Sec"| T7
+    subgraph CLOUD_GUEST["Zscaler Cloud 2: zscalerbeta.net (Guest)"]
+        subgraph GUEST_PRI["zscalerbeta.net Primary DC (VIP: 192.168.1.242 | netns: gre1)"]
+            T5["5. Guest - GE1 - zscalerbeta.net Primary\nGRE: gre21 (172.20.67.74/30) | L7: :7000"]
+            T6["7. Guest - GE2 - zscalerbeta.net Primary\nGRE: gre31 (172.20.67.66/30) | L7: :7004"]
+        end
+        subgraph GUEST_SEC["zscalerbeta.net Secondary DC (VIP: 192.168.1.243 | netns: gre2)"]
+            T7["6. Guest - GE1 - zscalerbeta.net Secondary\nGRE: gre22 (172.20.67.78/30) | L7: :7001"]
+            T8["8. Guest - GE2 - zscalerbeta.net Secondary\nGRE: gre32 (172.20.67.70/30) | L7: :7005"]
+        end
+    end
 
-    GE2 -.->|"1. Prod Pri"| T2
-    GE2 -.->|"2. Prod Sec"| T4
-    GE2 -.->|"3. Guest Pri"| T6
-    GE2 -.->|"4. Guest Sec"| T8
+    T_GE1 -->|"gre1 (:7002)"| T1
+    T_GE1 -->|"gre2 (:7003)"| T3
+    T_GE2 -.->|"gre11 (:7006)"| T2
+    T_GE2 -.->|"gre12 (:7007)"| T4
+
+    G_GE1 -->|"gre21 (:7000)"| T5
+    G_GE1 -->|"gre22 (:7001)"| T7
+    G_GE2 -.->|"gre31 (:7004)"| T6
+    G_GE2 -.->|"gre32 (:7005)"| T8
 
     style EDGE stroke:#3b82f6,stroke-width:2px
+    style SEG_TRUSTED stroke:#0ea5e9,stroke-width:2px
+    style SEG_GUEST stroke:#10b981,stroke-width:2px
     style CLOUD_PROD stroke:#0ea5e9,stroke-width:2px
     style CLOUD_GUEST stroke:#10b981,stroke-width:2px
     style PROD_PRI stroke:#10b981,stroke-width:2px
