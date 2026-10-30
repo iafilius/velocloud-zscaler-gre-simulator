@@ -65,7 +65,7 @@ ip -n gre1 addr add ${GRETUNNELIP_1} peer 172.21.12.161 dev gre1
 ip -n gre1 link set dev gre1 up
 
 # Setup Prod/gre2 Secondary (GE1)
-ip -n gre2 tunnel add gre2 mode gre local ${LOCALIPIP_2:-$LOCALIP_2} remote ${EDGEIP_GE1} ttl 255
+ip -n gre2 tunnel add gre2 mode gre local ${LOCALIP_2} remote ${EDGEIP_GE1} ttl 255
 ip -n gre2 addr add ${GRETUNNELIP_2} peer 172.21.12.165 dev gre2
 ip -n gre2 link set dev gre2 up
 

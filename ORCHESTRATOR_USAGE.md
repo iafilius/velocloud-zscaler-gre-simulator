@@ -67,29 +67,29 @@ Each menu key (`[1]`–`[8]`) controls one specific **unique `(Segment / Zscaler
 - **`[3]` — Toggle Guest Primary GE1 (`192.168.1.242:7000` in `gre1`, tunnel `gre21`)**
   - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Primary DC** (`destId: 0`, VIP `192.168.1.242`)
-  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre1` (`gre21`, inner `/30`: `172.20.67.33` $\leftrightarrow$ `.34`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre1` (`gre21`, inner `/30`: `172.20.67.73` $\leftrightarrow$ `.74`)
 - **`[4]` — Toggle Guest Secondary GE1 (`192.168.1.243:7001` in `gre2`, tunnel `gre22`)**
   - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.243`)
-  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre2` (`gre22`, inner `/30`: `172.20.67.37` $\leftrightarrow$ `.38`)
+  - **WAN Link & Tunnel:** Edge `GE1` (`192.168.1.64`) $\rightarrow$ `netns gre2` (`gre22`, inner `/30`: `172.20.67.77` $\leftrightarrow$ `.78`)
 
 **GE2 Endpoints (VeloCloud Edge WAN2 `192.168.1.65`):**
 - **`[5]` — Toggle Prod Primary GE2 (`192.168.1.240:7006` in `gre1`, tunnel `gre11`)**
   - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscaler.net` — Primary DC** (`destId: 0`, VIP `192.168.1.240`)
-  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre11`, inner `/30`: `172.21.12.169` $\leftrightarrow$ `.170`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre11`, inner `/30`: `172.21.12.153` $\leftrightarrow$ `.154`)
 - **`[6]` — Toggle Prod Secondary GE2 (`192.168.1.241:7007` in `gre2`, tunnel `gre12`)**
   - **Segment Served:** Trusted / Production LAN (`10.23.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscaler.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.241`)
-  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre12`, inner `/30`: `172.21.12.173` $\leftrightarrow$ `.174`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre12`, inner `/30`: `172.21.12.157` $\leftrightarrow$ `.158`)
 - **`[7]` — Toggle Guest Primary GE2 (`192.168.1.242:7004` in `gre1`, tunnel `gre31`)**
   - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Primary DC** (`destId: 0`, VIP `192.168.1.242`)
-  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre31`, inner `/30`: `172.20.67.41` $\leftrightarrow$ `.42`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre1` (`gre31`, inner `/30`: `172.20.67.65` $\leftrightarrow$ `.66`)
 - **`[8]` — Toggle Guest Secondary GE2 (`192.168.1.243:7005` in `gre2`, tunnel `gre32`)**
   - **Segment Served:** Guest Wi-Fi / Untrusted LAN (`172.16.0.0/24`)
   - **Zscaler Cloud & Role:** **`zscalerbeta.net` — Secondary DC** (`destId: 1`, VIP `192.168.1.243`)
-  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre32`, inner `/30`: `172.20.67.45` $\leftrightarrow$ `.46`)
+  - **WAN Link & Tunnel:** Edge `GE2` (`192.168.1.65`) $\rightarrow$ `netns gre2` (`gre32`, inner `/30`: `172.20.67.69` $\leftrightarrow$ `.70`)
 
 Each press cycles the selected endpoint: **`UP` -> `DEGRADED` -> `DOWN` -> `UP`**
 
