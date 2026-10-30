@@ -27,20 +27,72 @@ Using **Linux Network Namespaces (`gre1` and `gre2`)**, a **MAC-preserving Linux
 
 ---
 
-## 1. End-to-End Network Architecture
+## 1. End-to-End Network Architecture: Clouds, Primary/Secondary DCs & Unique 3-Tuples
 
-A production VeloCloud SD-WAN deployment with dual WAN links (`GE1` and `GE2`) and two segments (`Production` and `Guest`) builds **8 simultaneous GRE tunnels** to Zscaler (Primary DC and Secondary DC for each WAN link and segment).
+A production VeloCloud SD-WAN Edge with **2 WAN links (`GE1` and `GE2`)** and **2 Zscaler Clouds / CSS profiles (`Production: zscaler.net` and `Guest: zscalerbeta.net`)** builds **4 GRE connections per WAN interface (8 simultaneous GRE tunnels in total)**.
 
-To terminate all 8 GRE tunnels on a single Linux laptop/server without routing table collisions or local IP bypass, the simulator divides the host network stack into two isolated Linux Network Namespaces (`gre1` and `gre2`) connected via a bridge (`br1`):
+Every GRE tunnel—and its dedicated L7 HTTP health check port (`7000`–`7007`)—is uniquely defined by the **3-Tuple**:
+
+$$\text{Unique Connection Tuple} = (\text{Zscaler Cloud}, \text{Datacenter Role [Primary / Secondary]}, \text{Edge WAN Interface [GE1 / GE2]})$$
+
+### 1A. Logical Zscaler Cloud & Unique Tuple Hierarchy (4 Tunnels per WAN / 8 Total)
+
+```mermaid
+flowchart LR
+    subgraph EDGE["VeloCloud SD-WAN Edge (4 Tunnels per WAN Interface)"]
+        GE1["WAN1: GE1 (192.168.1.64)\nOriginates 4 GRE Tunnels + 4 L7 Probes\n(Ports :7002, :7003, :7000, :7001)"]
+        GE2["WAN2: GE2 (192.168.1.65)\nOriginates 4 GRE Tunnels + 4 L7 Probes\n(Ports :7006, :7007, :7004, :7005)"]
+    end
+
+    subgraph CLOUD_PROD["Zscaler Cloud 1: Production (zscaler.net — Segment 10.23.0.0/24)"]
+        subgraph PROD_PRI["Primary DC (destId: 0 | VIP: 192.168.1.240 | netns: gre1)"]
+            T1["Tuple 1: (Prod, Primary, GE1)\nGRE: gre1 (172.21.12.162/30) | L7: :7002"]
+            T2["Tuple 2: (Prod, Primary, GE2)\nGRE: gre11 (172.21.12.154/30) | L7: :7006"]
+        end
+        subgraph PROD_SEC["Secondary DC (destId: 1 | VIP: 192.168.1.241 | netns: gre2)"]
+            T3["Tuple 3: (Prod, Secondary, GE1)\nGRE: gre2 (172.21.12.166/30) | L7: :7003"]
+            T4["Tuple 4: (Prod, Secondary, GE2)\nGRE: gre12 (172.21.12.158/30) | L7: :7007"]
+        end
+    end
+
+    subgraph CLOUD_GUEST["Zscaler Cloud 2: Guest (zscalerbeta.net — Segment 172.16.0.0/24)"]
+        subgraph GUEST_PRI["Primary DC (destId: 0 | VIP: 192.168.1.242 | netns: gre1)"]
+            T5["Tuple 5: (Guest, Primary, GE1)\nGRE: gre21 (172.20.67.74/30) | L7: :7000"]
+            T6["Tuple 6: (Guest, Primary, GE2)\nGRE: gre31 (172.20.67.66/30) | L7: :7004"]
+        end
+        subgraph GUEST_SEC["Secondary DC (destId: 1 | VIP: 192.168.1.243 | netns: gre2)"]
+            T7["Tuple 7: (Guest, Secondary, GE1)\nGRE: gre22 (172.20.67.78/30) | L7: :7001"]
+            T8["Tuple 8: (Guest, Secondary, GE2)\nGRE: gre32 (172.20.67.70/30) | L7: :7005"]
+        end
+    end
+
+    GE1 -->|"1. Prod Pri"| T1
+    GE1 -->|"2. Prod Sec"| T3
+    GE1 -->|"3. Guest Pri"| T5
+    GE1 -->|"4. Guest Sec"| T7
+
+    GE2 -.->|"1. Prod Pri"| T2
+    GE2 -.->|"2. Prod Sec"| T4
+    GE2 -.->|"3. Guest Pri"| T6
+    GE2 -.->|"4. Guest Sec"| T8
+
+    style EDGE stroke:#3b82f6,stroke-width:2px
+    style CLOUD_PROD stroke:#0ea5e9,stroke-width:2px
+    style CLOUD_GUEST stroke:#10b981,stroke-width:2px
+    style PROD_PRI stroke:#10b981,stroke-width:2px
+    style GUEST_PRI stroke:#10b981,stroke-width:2px
+    style PROD_SEC stroke:#8b5cf6,stroke-width:2px
+    style GUEST_SEC stroke:#8b5cf6,stroke-width:2px
+```
+
+### 1B. Physical Host Bridge (`br1`) & Linux Network Namespace Mapping (`gre1` vs `gre2`)
+
+To terminate all 8 GRE tunnels on a single Linux laptop/server without routing table collisions (`10.23.0.0/24` and `172.16.0.0/24`) or local IP bypass, the simulator maps **all Primary DCs (`.240` & `.242`) into namespace `gre1`** and **all Secondary DCs (`.241` & `.243`) into namespace `gre2`**, connected via a MAC-preserving Linux Bridge (`br1`):
 
 ```mermaid
 flowchart TB
-    subgraph EDGE["VeloCloud SD-WAN Edge Appliance"]
-        GE1["GE1 (WAN1): 192.168.1.64"]
-        GE2["GE2 (WAN2): 192.168.1.65"]
-    end
-
     subgraph UNDERLAY["Physical LAN / WAN Underlay (192.168.1.0/24)"]
+        EDGE_WAN["VeloCloud Edge WANs: GE1 (.64) & GE2 (.65)"]
         GW["Upstream Gateway / Internet: 192.168.1.254"]
     end
 
@@ -54,33 +106,26 @@ flowchart TB
         BR1 --> VA2
     end
 
-    subgraph NS_GRE1["Network Namespace: gre1 (Primary Zscaler DC)"]
-        VB1["veth-b1 VIPs: 192.168.1.240 (Prod) & 192.168.1.242 (Guest)"]
-        T_PRI_PROD["Prod GRE Tunnels: gre1 (GE1 .162/30) & gre11 (GE2 .154/30)"]
-        T_PRI_GUEST["Guest GRE Tunnels: gre21 (GE1 .74/30) & gre31 (GE2 .66/30)"]
-        L7_PRI["Python L7 HTTP Listeners: :7002, :7006 (Prod) | :7000, :7004 (Guest)"]
-        VB1 --> T_PRI_PROD
-        VB1 --> T_PRI_GUEST
-        VB1 --> L7_PRI
+    subgraph NS_GRE1["Network Namespace: gre1 (Hosts BOTH Primary Zscaler DCs)"]
+        VB1["veth-b1"]
+        PRI_C1["Cloud 1 Primary DC (zscaler.net — VIP 192.168.1.240)\n- GE1 Tuple: gre1 (172.21.12.162/30) + L7 :7002\n- GE2 Tuple: gre11 (172.21.12.154/30) + L7 :7006"]
+        PRI_C2["Cloud 2 Primary DC (zscalerbeta.net — VIP 192.168.1.242)\n- GE1 Tuple: gre21 (172.20.67.74/30) + L7 :7000\n- GE2 Tuple: gre31 (172.20.67.66/30) + L7 :7004"]
+        VB1 --> PRI_C1
+        VB1 --> PRI_C2
     end
 
-    subgraph NS_GRE2["Network Namespace: gre2 (Secondary Zscaler DC)"]
-        VB2["veth-b2 VIPs: 192.168.1.241 (Prod) & 192.168.1.243 (Guest)"]
-        T_SEC_PROD["Prod GRE Tunnels: gre2 (GE1 .166/30) & gre12 (GE2 .158/30)"]
-        T_SEC_GUEST["Guest GRE Tunnels: gre22 (GE1 .78/30) & gre32 (GE2 .70/30)"]
-        L7_SEC["Python L7 HTTP Listeners: :7003, :7007 (Prod) | :7001, :7005 (Guest)"]
-        VB2 --> T_SEC_PROD
-        VB2 --> T_SEC_GUEST
-        VB2 --> L7_SEC
+    subgraph NS_GRE2["Network Namespace: gre2 (Hosts BOTH Secondary Zscaler DCs)"]
+        VB2["veth-b2"]
+        SEC_C1["Cloud 1 Secondary DC (zscaler.net — VIP 192.168.1.241)\n- GE1 Tuple: gre2 (172.21.12.166/30) + L7 :7003\n- GE2 Tuple: gre12 (172.21.12.158/30) + L7 :7007"]
+        SEC_C2["Cloud 2 Secondary DC (zscalerbeta.net — VIP 192.168.1.243)\n- GE1 Tuple: gre22 (172.20.67.78/30) + L7 :7001\n- GE2 Tuple: gre32 (172.20.67.70/30) + L7 :7005"]
+        VB2 --> SEC_C1
+        VB2 --> SEC_C2
     end
 
-    GE1 <-->|"GRE + L7 Probes"| UNDERLAY
-    GE2 <-->|"GRE + L7 Probes"| UNDERLAY
-    UNDERLAY <--> NIC
+    EDGE_WAN <-->|"8 GRE Tunnels + 8 L7 Probes"| NIC
     VA1 <-->|"Virtual Ethernet Pipe"| VB1
     VA2 <-->|"Virtual Ethernet Pipe"| VB2
 
-    style EDGE stroke:#3b82f6,stroke-width:2px
     style HOST stroke:#64748b,stroke-width:2px
     style NS_GRE1 stroke:#10b981,stroke-width:2px
     style NS_GRE2 stroke:#8b5cf6,stroke-width:2px

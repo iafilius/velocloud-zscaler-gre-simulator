@@ -81,10 +81,42 @@ On the VeloCloud Edge, Layer 7 health checks are driven by `/opt/vc/sbin/l7_heal
    When CSS L7 Health Checks are enabled, `edged` allocates destination ports out of the range `7000`–`7063` (logged in `/var/log/edged.log` as `[NVS] l7_health_dst_port_int: L7 Health dst ports range 7000--7063`).
 2. **One Port per `(Cloud, Destination DC, WAN Link)` Tuple:**
    Each combination of:
-   - **CSS Service (`nvsLogicalId`)**: e.g., Production (`zscaler.net`) vs. Guest (`zscalerbeta.net`)
+   - **CSS Service / Zscaler Cloud (`nvsLogicalId`)**: Production (`zscaler.net`) vs. Guest (`zscalerbeta.net`)
    - **Datacenter (`destId`)**: `0` (Primary DC) vs. `1` (Secondary DC)
    - **WAN Interface (`linkLogicalId`)**: `GE1` (`192.168.1.64`) vs. `GE2` (`192.168.1.65`)
-   receives its own dedicated port from `7000` to `7007`:
+   receives its own dedicated port from `7000` to `7007` (4 ports per WAN interface, 4 ports per Zscaler Cloud):
+
+```mermaid
+flowchart LR
+    subgraph EDGE["VeloCloud Edge L7 Prober (l7_health_check.py)"]
+        W1["WAN1: GE1 (192.168.1.64)\n4 Unique Tuple Probes"]
+        W2["WAN2: GE2 (192.168.1.65)\n4 Unique Tuple Probes"]
+    end
+
+    subgraph C_PROD["Zscaler Cloud 1: zscaler.net (Production)"]
+        P_PRI["Primary DC (destId: 0 | VIP .240 | netns gre1)\n- Tuple (Prod, Pri, GE1) -> TCP :7002 (gre1)\n- Tuple (Prod, Pri, GE2) -> TCP :7006 (gre11)"]
+        P_SEC["Secondary DC (destId: 1 | VIP .241 | netns gre2)\n- Tuple (Prod, Sec, GE1) -> TCP :7003 (gre2)\n- Tuple (Prod, Sec, GE2) -> TCP :7007 (gre12)"]
+    end
+
+    subgraph C_GUEST["Zscaler Cloud 2: zscalerbeta.net (Guest)"]
+        G_PRI["Primary DC (destId: 0 | VIP .242 | netns gre1)\n- Tuple (Guest, Pri, GE1) -> TCP :7000 (gre21)\n- Tuple (Guest, Pri, GE2) -> TCP :7004 (gre31)"]
+        G_SEC["Secondary DC (destId: 1 | VIP .243 | netns gre2)\n- Tuple (Guest, Sec, GE1) -> TCP :7001 (gre22)\n- Tuple (Guest, Sec, GE2) -> TCP :7005 (gre32)"]
+    end
+
+    W1 -->|":7002"| P_PRI
+    W1 -->|":7003"| P_SEC
+    W1 -->|":7000"| G_PRI
+    W1 -->|":7001"| G_SEC
+
+    W2 -.->|":7006"| P_PRI
+    W2 -.->|":7007"| P_SEC
+    W2 -.->|":7004"| G_PRI
+    W2 -.->|":7005"| G_SEC
+
+    style EDGE stroke:#3b82f6,stroke-width:2px
+    style C_PROD stroke:#0ea5e9,stroke-width:2px
+    style C_GUEST stroke:#10b981,stroke-width:2px
+```
 
 | `dstPort` | `cloud` | `destId` | `nvsIp` (Zscaler VIP) | WAN Link | Simulator Namespace |
 | :--- | :--- | :--- | :--- | :--- | :--- |
