@@ -1,34 +1,39 @@
-# Cisco Catalyst SD-WAN (`cEdge`) & Autonomous IOS-XE Configurations for the Zscaler GRE Lab Simulator
+# Cisco Catalyst SD-WAN (`cEdge` — IOS-XE Controller Mode) Configurations for the Zscaler 8-Tunnel GRE Lab Simulator
 
-This document provides complete, verified **Cisco Catalyst SD-WAN (`cEdge` in Controller Mode, IOS-XE 17.9+ / 17.12+)** and **Autonomous Cisco IOS-XE** configurations based on the official **Cisco Catalyst SD-WAN Cloud Security (SIG) Configuration Guide** and **Zscaler & Cisco Deployment Guides**, mapped 1-to-1 onto the IP addresses, VRFs, **dual-cloud default routes (`0.0.0.0/0`)**, and 8 GRE tunnels of the Linux Network Namespace Zscaler Simulator (`mknetns-gre1.sh`, `doit.sh`, and `zscaler_orchestrator_pyroute2.py`).
+> **Target Platform & Applicability**
+> - **Operating System:** Cisco IOS-XE in **Catalyst SD-WAN Controller Mode (`cEdge`)**, Release **17.9.x / 17.12.x+**
+> - **Supported Hardware & Virtual Appliances:**
+>   - Cisco Catalyst 8200 / 8300 / 8500 Series Edge Platforms (`C8200`, `C8300`, `C8500`)
+>   - Cisco Catalyst 8000V Edge Software (`C8000V` / `CSR1000v` in Controller Mode)
+>   - Cisco ISR 1100 / ISR 4000 / ASR 1000 Series running IOS-XE SD-WAN Controller Mode
+> - **Management & CLI Mode:** Managed via **Cisco Catalyst SD-WAN Manager (`vManage`)** (Feature Templates / Configuration Groups / CLI Add-On Templates) or directly via the transactional CLI (`config-transaction` $\rightarrow$ `commit`).
+> - **Looking for another Cisco platform?** See [`examples/README.md`](README.md) for [Autonomous IOS-XE](cisco_autonomous_ios_xe_zscaler_gre.md), [Cisco IOS-XR](cisco_ios_xr_zscaler_gre.md), or [Cisco SD-WAN `vEdge` (Viptela OS)](cisco_sdwan_vedge_zscaler_gre.md).
 
 ---
 
-## 0. Core Architectural Principles & Verified Cisco Design Constraints
+## 0. Core Architectural Principles & Verified `cEdge` Design Constraints
 
 ### 0.1 Three Non-Negotiable Security & Routing Principles
 1. **Zero Manual Route-Leaking (`route-target import/export`, `global` static routes, or VRF-to-VRF leaks):**
-   Separation between the **Underlay (Transport WAN)** and the **Overlay (Customer VRFs / Service VPNs)** is handled 100% natively using Cisco's **Front-Door VRF (fVRF) / Inside VRF (iVRF)** tunnel architecture (`vrf forwarding` + `tunnel route-via ... mandatory` / `tunnel vrf`) or Cisco SD-WAN's native `service sig` abstraction.
+   Separation between the **Underlay (Transport VPN `0`)** and the **Overlay (Service VPNs `10` & `20`)** is handled 100% natively using Cisco's **Front-Door VRF (`fVRF`) / Inside VRF (`iVRF`)** tunnel architecture (`vrf forwarding` + `tunnel route-via ... mandatory`) or Cisco SD-WAN's native `service sig` abstraction.
 2. **Strict Security Isolation Between `Trusted` (Production) and `Guest` Segments:**
-   - **Service VPN `10` / `VRF-TRUSTED` (`10.23.0.0/24`, VLAN 950)** and **Service VPN `20` / `VRF-GUEST` (`172.16.0.0/24`, VLAN 952)** are completely isolated on the router and can never communicate with one another.
+   - **Service VPN `10` (`10.23.0.0/24`, VLAN 950)** and **Service VPN `20` (`172.16.0.0/24`, VLAN 952)** are completely isolated on the `cEdge` and can never communicate with one another.
 3. **1-to-1 Mapping to the 8-Tunnel Ubuntu Simulator (`192.168.1.57`):**
 
-| Tunnel # | Segment / VRF (`0.0.0.0/0`) | Zscaler Cloud & Role | Cisco WAN Source $\rightarrow$ Zscaler VIP | Simulator NetNS / Dev | Inner `/30` (Cisco $\leftrightarrow$ Sim) | Orchestrator L7 Port | Default Route AD |
+| Tunnel # | Service VPN (`0.0.0.0/0`) | Zscaler Cloud & Role | `cEdge` WAN Source $\rightarrow$ Zscaler VIP | Simulator NetNS / Dev | Inner `/30` (`cEdge` $\leftrightarrow$ Sim) | Orchestrator L7 Port | Default Route AD |
 | :-: | :--- | :--- | :--- | :--- | :--- | :-: | :-: |
-| **1** | **VPN 10 / `VRF-TRUSTED`** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `GE1 .64 -> 192.168.1.240` | `gre1` / `gre1` | `172.21.12.161 <-> 172.21.12.162` | `.240:7002` | **AD 10** (Active) |
-| **2** | **VPN 10 / `VRF-TRUSTED`** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `GE1 .64 -> 192.168.1.241` | `gre2` / `gre2` | `172.21.12.165 <-> 172.21.12.166` | `.241:7003` | **AD 20** (Standby 1) |
-| **3** | **VPN 10 / `VRF-TRUSTED`** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `GE2 .65 -> 192.168.1.240` | `gre1` / `gre11` | `172.21.12.153 <-> 172.21.12.154` | `.240:7006` | **AD 30** (Standby 2) |
-| **4** | **VPN 10 / `VRF-TRUSTED`** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `GE2 .65 -> 192.168.1.241` | `gre2` / `gre12` | `172.21.12.157 <-> 172.21.12.158` | `.241:7007` | **AD 40** (Standby 3) |
-| **5** | **VPN 20 / `VRF-GUEST`** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `GE1 .64 -> 192.168.1.242` | `gre1` / `gre21` | `172.20.67.73 <-> 172.20.67.74` | `.242:7000` | **AD 10** (Active) |
-| **6** | **VPN 20 / `VRF-GUEST`** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `GE1 .64 -> 192.168.1.243` | `gre2` / `gre22` | `172.20.67.77 <-> 172.20.67.78` | `.243:7001` | **AD 20** (Standby 1) |
-| **7** | **VPN 20 / `VRF-GUEST`** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `GE2 .65 -> 192.168.1.242` | `gre1` / `gre31` | `172.20.67.65 <-> 172.20.67.66` | `.242:7004` | **AD 30** (Standby 2) |
-| **8** | **VPN 20 / `VRF-GUEST`** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `GE2 .65 -> 192.168.1.243` | `gre2` / `gre32` | `172.20.67.69 <-> 172.20.67.70` | `.243:7005` | **AD 40** (Standby 3) |
+| **1** | **Service VPN 10** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `GE1 .64 -> 192.168.1.240` | `gre1` / `gre1` | `172.21.12.161 <-> 172.21.12.162` | `.240:7002` | **AD 10** (Active) |
+| **2** | **Service VPN 10** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `GE1 .64 -> 192.168.1.241` | `gre2` / `gre2` | `172.21.12.165 <-> 172.21.12.166` | `.241:7003` | **AD 20** (Standby 1) |
+| **3** | **Service VPN 10** (`10.23.0.0/24`) | `zscaler.net` **Primary** | `GE2 .65 -> 192.168.1.240` | `gre1` / `gre11` | `172.21.12.153 <-> 172.21.12.154` | `.240:7006` | **AD 30** (Standby 2) |
+| **4** | **Service VPN 10** (`10.23.0.0/24`) | `zscaler.net` **Secondary** | `GE2 .65 -> 192.168.1.241` | `gre2` / `gre12` | `172.21.12.157 <-> 172.21.12.158` | `.241:7007` | **AD 40** (Standby 3) |
+| **5** | **Service VPN 20** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `GE1 .64 -> 192.168.1.242` | `gre1` / `gre21` | `172.20.67.73 <-> 172.20.67.74` | `.242:7000` | **AD 10** (Active) |
+| **6** | **Service VPN 20** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `GE1 .64 -> 192.168.1.243` | `gre2` / `gre22` | `172.20.67.77 <-> 172.20.67.78` | `.243:7001` | **AD 20** (Standby 1) |
+| **7** | **Service VPN 20** (`172.16.0.0/24`) | `zscalerbeta.net` **Primary** | `GE2 .65 -> 192.168.1.242` | `gre1` / `gre31` | `172.20.67.65 <-> 172.20.67.66` | `.242:7004` | **AD 30** (Standby 2) |
+| **8** | **Service VPN 20** (`172.16.0.0/24`) | `zscalerbeta.net` **Secondary** | `GE2 .65 -> 192.168.1.243` | `gre2` / `gre32` | `172.20.67.69 <-> 172.20.67.70` | `.243:7005` | **AD 40** (Standby 3) |
 
 ---
 
-### 0.2 Verified Cisco IOS-XE Constraints vs. Lab Assumptions (Read First)
-
-To ensure complete technical accuracy when reviewing with Cisco or Zscaler engineering teams, the following **platform constraints** and **lab assumptions** are explicitly noted:
+### 0.2 Verified Cisco `cEdge` Platform Constraints vs. Lab Assumptions
 
 1. **Why Two `cEdge` Options Are Presented (Single-Cloud `service sig` vs. Dual-Cloud Service-Side GRE):**
    - **Verified Cisco SD-WAN Constraint:** On a `cEdge` in Controller Mode, the native **SIG Feature Template** (`sdwan -> service sig vrf global -> ha-pairs`) creates a **single global SIG tunnel pool** in Transport VPN `0` (up to 4 HA pairs / 8 tunnels max) and allows **only one SIG Feature Template / Zscaler account per `cEdge` device template**. Furthermore, neither `ip sdwan route vrf <id> 0.0.0.0/0 service sig` nor a `vSmart` Centralized Data Policy (`set service sig`) can pin `Service VPN 10` to one SIG tunnel pair (`.240/.241`) and `Service VPN 20` to a *different* SIG tunnel pair (`.242/.243`) inside `service sig vrf global`.
@@ -40,15 +45,14 @@ To ensure complete technical accuracy when reviewing with Cisco or Zscaler engin
    - However, for **Service VPN static routes** (`cEdge Option 2`), Cisco's native `endpoint-tracker` with `tracker-type static-route` **does not support HTTP URLs (`endpoint-api-url`)**—it only supports ICMP or TCP/UDP port probes. Therefore, to run true HTTP Layer-7 `GET /vpntest` probes with a **5-second interval** inside Service VPNs `10` and `20`, **cEdge Option 2** uses standard IOS-XE VRF-aware `ip sla <id> -> http raw` + `track <id> ip sla <id> state` (pushed via a vManage **CLI Add-On Template**, or configured directly in `config-transaction`). We also document the alternative 100% GUI Feature-Template `tracker-type static-route` TCP port `80` tracker under Option 2.
 3. **Verified Cisco IOS-XE VRF-Aware GRE `keepalive` Constraint (`iVRF != fVRF`):**
    - In **cEdge Option 1 (`service sig vrf global`)**, both the inner tunnel interface (`iVRF`) and the outer transport header (`fVRF`) reside in **Transport VPN `0` (`global`)** (`iVRF == fVRF`). Therefore, standard L3 GRE `keepalive 5 3` is 100% supported and active on `Tunnel100001..100012` alongside the 20-second L7 `endpoint-tracker`.
-   - In **cEdge Option 2** (and **Part 2 Autonomous IOS-XE**), the inner tunnel payload is placed inside **Service VPN `10` or `20` (`vrf forwarding 10/20`, `iVRF`)**, while the outer GRE transport header resides in **Transport VPN `0` (`fVRF`)** (`iVRF != fVRF`).
+   - In **cEdge Option 2**, the inner tunnel payload is placed inside **Service VPN `10` or `20` (`vrf forwarding 10/20`, `iVRF`)**, while the outer GRE transport header resides in **Transport VPN `0` (`fVRF`)** (`iVRF != fVRF`).
    - Per the official **Cisco IOS-XE IPv4 GRE Configuration Guide** (*"Keepalive is not supported on VRF-aware GRE tunnels"* when `iVRF != fVRF`), Cisco's L3 GRE keepalive mechanism encapsulates a pre-built inner return GRE packet (`src=Zscaler_VIP, dst=Cisco_WAN_IP, protocol=47`) inside the outgoing GRE packet. When `iVRF != fVRF`, the return lookup for the outer WAN IP (`192.168.1.64/.65`) occurs inside the inner VRF (`VRF 10/20`), where the underlay WAN subnet does not exist (and must never be leaked!), causing the tunnel line-protocol to drop if `keepalive` is configured.
-   - Therefore, in **cEdge Option 2**, `keepalive` is **intentionally omitted** (`! no keepalive`) on `Tunnel1..Tunnel32`. Instead, Option 2 uses:
+   - Therefore, in **cEdge Option 2**, `keepalive` is **intentionally omitted** on `Tunnel1..Tunnel32`. Instead, Option 2 uses:
      1. **`tunnel route-via GigabitEthernet1/2 mandatory`** (which immediately brings the tunnel line-protocol `DOWN` if the underlay WAN interface or route fails), and
      2. **VRF-aware L7 `ip sla http raw` (`/vpntest` every 5 seconds with `track 1..32` `delay down 15 up 30`)**, which tests **both** the L3 GRE data-plane path and the L7 Zscaler `/vpntest` responder end-to-end inside `VRF 10` and `VRF 20` every 5 seconds.
 4. **Explicit Lab Assumptions:**
-   - **Target Software:** Cisco IOS-XE **17.9.x / 17.12.x** (Catalyst SD-WAN Controller Mode uses `config-transaction`; Autonomous Mode uses `configure terminal`).
-   - **Interface Naming:** Examples use `GigabitEthernet1` (`192.168.1.64`), `GigabitEthernet2` (`192.168.1.65`), and LAN sub-interfaces `GigabitEthernet3.950` / `GigabitEthernet3.952` (matching Catalyst 8000V / CSR1000v virtual routers). On physical Catalyst 8200/8300 or ISR 4000 hardware, substitute `GigabitEthernet0/0/0`, `GigabitEthernet0/0/1`, and `GigabitEthernet0/0/2.950`.
-   - **Inside-the-Tunnel vs. Outside-the-Tunnel L7 Probes:** Unlike VeloCloud (which sends L7 `GET /vpntest` probes **outside** the GRE tunnel to `.240..243` on dynamic kernel ports `7000..7007`), Cisco IOS-XE sends its L7 probes **inside** the GRE tunnel to TCP port `80`. Because each probe targets the **connected `/30` Zscaler ZEN IP** (`172.21.12.162:80`, etc.), the probe is guaranteed by the connected `/30` route to egress strictly out its own GRE tunnel even when that tunnel's tracked `0.0.0.0/0` route is `DOWN`. On the Ubuntu simulator, 8 `iptables` `DNAT` rules (Section 3.2) redirect those inside-the-tunnel TCP port `80` probes to the simulator's `7000..7007` listeners.
+   - **Interface Naming:** Examples use `GigabitEthernet1` (`192.168.1.64`), `GigabitEthernet2` (`192.168.1.65`), and LAN sub-interfaces `GigabitEthernet3.950` / `GigabitEthernet3.952` (matching Catalyst 8000V virtual routers). On physical Catalyst 8200/8300 or ISR 4000 hardware, substitute `GigabitEthernet0/0/0`, `GigabitEthernet0/0/1`, and `GigabitEthernet0/0/2.950`.
+   - **Inside-the-Tunnel L7 Probes:** Because each probe targets the **connected `/30` Zscaler ZEN IP** (`172.21.12.162:80`, etc.), the probe is guaranteed by the connected `/30` route to egress strictly out its own GRE tunnel even when that tunnel's tracked `0.0.0.0/0` route is `DOWN`. On the Ubuntu simulator, the 8 `iptables` `DNAT` rules (see [`examples/README.md`](README.md#step-b-enable-the-8-iptables-tcp-port-80-dnat-rules-for-inside-the-tunnel-http-vpntest-probes)) redirect those inside-the-tunnel TCP port `80` probes to the simulator's `7000..7007` listeners.
 
 ---
 
@@ -64,7 +68,7 @@ Every configuration block in this document is **100% YANG-modeled and transactio
 | **GRE Tunnel Encapsulation & Underlay Pinning (`route-via mandatory`)** | `Cisco-IOS-XE-tunnel.yang`<br>`Cisco-IOS-XE-interfaces.yang` | `/native/interface/Tunnel/tunnel/source`<br>`/native/interface/Tunnel/tunnel/destination`<br>`/native/interface/Tunnel/tunnel/mode/gre/ipv4`<br>`/native/interface/Tunnel/tunnel/route-via` | **SIG Feature Template** (Option 1) or **Service VPN Interface GRE Template** (Option 2) |
 | **SD-WAN Underlay, SIG HA-Pairs & Service Routing (`Option 1`)** | `Cisco-IOS-XE-sdwan.yang` (augments `Cisco-IOS-XE-native`) | `/native/sdwan/interface/Tunnel/tunnel-options`<br>`/native/sdwan/service/sig/vrf[name='global']/ha-pairs`<br>`/native/ip/sdwan/route/vrf` | **SIG Feature Template** + **Service VPN Route (`service sig`)** |
 | **Native Endpoint Tracker (`Option 1` HTTP & `Option 2` Static-Route TCP)** | `Cisco-IOS-XE-endpoint-tracker.yang` | `/native/endpoint-tracker/tracker-definition`<br>`/native/track/tracked-object/endpoint-tracker` | **System / VPN Endpoint Tracker Feature Template** (or Configuration Group Policy Object) |
-| **VRF-Aware L7 HTTP `/vpntest` Probes (`Option 2`)** | `Cisco-IOS-XE-sla.yang` (augments `/native/ip`) | `/native/ip/sla/entry/http/raw-request`<br>`/native/ip/sla/entry/http/raw-request/vrf`<br>`/native/ip/sla/entry/http/raw-request/http-raw-request`<br>`/native/ip/sla/schedule` | **CLI Add-On Feature Template** (or Yang/NETCONF payload in Configuration Groups) |
+| **VRF-Aware L7 HTTP `/vpntest` Probes (`Option 2`)** | `Cisco-IOS-XE-sla.yang` (augments `/native/ip`) | `/native/ip/sla/entry/http/raw-request`<br>`/native/ip/sla/entry/http/raw-request/vrf`<br>`/native/ip/sla/entry/http/raw-request/http-raw-request`<br>`/native/ip/sla/schedule` | **CLI Add-On Feature Template** (or YANG/NETCONF payload in Configuration Groups) |
 | **Object Tracking & Delay Timers (`Option 2`)** | `Cisco-IOS-XE-track.yang` (augments `/native/track`) | `/native/track/tracked-object/ip/sla/state`<br>`/native/track/tracked-object/delay` | **CLI Add-On Feature Template** |
 | **Tracked Floating Default Routes (`0.0.0.0/0` per VRF, `Option 2`)** | `Cisco-IOS-XE-ip.yang` (augments `/native/ip/route`) | `/native/ip/route/vrf/ip-route-interface-forwarding-list` (`prefix`, `mask`, `fwd-list/fwd`, `metric`, `track`, `name`) | **Service VPN Feature Template (IPv4 Static Route)** or **CLI Add-On Feature Template** |
 
@@ -80,7 +84,7 @@ Every configuration block in this document is **100% YANG-modeled and transactio
 
 ---
 
-## Part 1: Cisco Catalyst SD-WAN (`cEdge` in Controller Mode — IOS-XE 17.9+)
+## 1. Architectural Comparison of the Two `cEdge` Options
 
 ```text
 +===================================================================================+
@@ -133,7 +137,7 @@ Every configuration block in this document is **100% YANG-modeled and transactio
 
 ---
 
-### cEdge Option 1: Native Cisco SD-WAN `service sig` (Transport VPN 0 SIG Tunnels)
+## 2. `cEdge` Option 1: Native Cisco SD-WAN `service sig` (Transport VPN 0 SIG Tunnels)
 
 In the standard Cisco/Zscaler SD-WAN SIG workflow, the **Cisco SIG Feature Template** creates the GRE tunnels inside **Transport VPN 0** and binds them into `sdwan -> service sig vrf global -> ha-pairs`.
 - **Default Route Steering (`0.0.0.0/0`):** Configured per Service VPN via `ip sdwan route vrf 10 0.0.0.0/0 service sig` and `ip sdwan route vrf 20 0.0.0.0/0 service sig` (or selectively via a `vSmart` Centralized Data Policy using `set service sig`).
@@ -201,6 +205,7 @@ interface GigabitEthernet3.952
 !      outer GRE packets to its dedicated WAN interface (Gi1 .64 or Gi2 .65).
 !    - "ip mtu 1476" (1500 - 24B IP+GRE); "ip tcp adjust-mss 1360" (Zscaler
 !      conservative default; 1436 is also valid for 1500B Ethernet).
+!    - "keepalive 5 3" is supported here because iVRF == fVRF == VPN 0 (global).
 interface Tunnel100001
  description ZS-SIG-Primary-GE1 (sim: netns gre1 / dev gre1 / port 7002)
  no shutdown
@@ -347,7 +352,7 @@ ip sdwan route vrf 10 0.0.0.0/0 service sig
 ip sdwan route vrf 20 0.0.0.0/0 service sig
 ```
 
-#### Optional for Option 1: Controller (`vSmart`) Centralized Data Policy to Bypass RFC1918 Traffic
+### Optional for Option 1: Controller (`vSmart`) Centralized Data Policy to Bypass RFC1918 Traffic
 If `VPN 10` or `VPN 20` also routes internal RFC1918 destinations over the SD-WAN OMP overlay, you can optionally attach a Centralized Data Policy on `vSmart` so RFC1918 traffic uses normal routing (`default-action accept`) while `0.0.0.0/0` internet traffic is steered to `service sig`:
 
 ```cisco
@@ -389,16 +394,16 @@ policy
 !
 ```
 
-> **Simulator Note for cEdge Option 1:**
+> **Simulator Note for `cEdge` Option 1:**
 > Because `cEdge Option 1` sends both `VPN 10` (`10.23.0.0/24`) and `VPN 20` (`172.16.0.0/24`) through the `zscaler.net` SIG tunnels (`Tunnel100001`/`gre1` and `Tunnel100002`/`gre2`), if you test Option 1 against the Ubuntu simulator (`doit.sh`), update the `172.16.0.0/24` return route inside `gre1`/`gre2` to point to `gre1`/`gre2`:
 > `sudo ip -n gre1 route replace 172.16.0.0/24 dev gre1` and `sudo ip -n gre2 route replace 172.16.0.0/24 dev gre2`.
-> To use **all 8 tunnels across both Zscaler clouds (`zscaler.net` `.240/.241` AND `zscalerbeta.net` `.242/.243`)** with hard per-VRF separation out of the box—identical to VeloCloud—use **cEdge Option 2** below.
+> To use **all 8 tunnels across both Zscaler clouds (`zscaler.net` `.240/.241` AND `zscalerbeta.net` `.242/.243`)** with hard per-VRF separation out of the box—identical to VeloCloud—use **`cEdge` Option 2** below.
 
 ---
 
-### cEdge Option 2: Per-Service-VPN Dedicated GRE Tunnels on `cEdge` (100% VeloCloud Dual-Cloud 8-Tunnel Equivalent!)
+## 3. `cEdge` Option 2: Per-Service-VPN Dedicated GRE Tunnels on `cEdge` (100% VeloCloud Dual-Cloud 8-Tunnel Equivalent)
 
-When testing against the 8-tunnel Ubuntu simulator—or when an enterprise requires **strict physical tunnel, VRF routing table, and dual Zscaler Cloud separation (`zscaler.net` for `VPN 10` and `zscalerbeta.net` for `VPN 20`)**—**cEdge Option 2** is the exact architectural equivalent of the VeloCloud 8-tunnel deployment:
+When testing against the 8-tunnel Ubuntu simulator—or when an enterprise requires **strict physical tunnel, VRF routing table, and dual Zscaler Cloud separation (`zscaler.net` for `VPN 10` and `zscalerbeta.net` for `VPN 20`)**—**`cEdge` Option 2** is the exact architectural equivalent of the VeloCloud 8-tunnel deployment:
 - **Service-Side GRE Interfaces (`vrf forwarding 10` & `vrf forwarding 20`):**
   Configured in vManage using **Service VPN Feature Template $\rightarrow$ Additional VPN Templates $\rightarrow$ VPN Interface GRE** (or via a **CLI Add-On Template**).
   - The **inside (overlay/payload)** of each GRE tunnel is placed directly inside its own Service VPN (`vrf forwarding 10` for `Tunnel1, 2, 11, 12` and `vrf forwarding 20` for `Tunnel21, 22, 31, 32`).
@@ -407,11 +412,11 @@ When testing against the 8-tunnel Ubuntu simulator—or when an enterprise requi
   - **Service VPN `10` (`10.23.0.0/24`)** has 4 tracked floating static default routes (`0.0.0.0/0`) pointing exclusively to **`zscaler.net`** (`Tunnel1` AD 10, `Tunnel2` AD 20, `Tunnel11` AD 30, `Tunnel12` AD 40).
   - **Service VPN `20` (`172.16.0.0/24`)** has 4 tracked floating static default routes (`0.0.0.0/0`) pointing exclusively to **`zscalerbeta.net`** (`Tunnel21` AD 10, `Tunnel22` AD 20, `Tunnel31` AD 30, `Tunnel32` AD 40).
   - **Why Targeting the Connected `/30` Zscaler Peer IP (`172.21.12.162`, etc.) Is Crucial:**
-    Because `172.21.12.162/30` is directly connected on `Tunnel1` inside `vrf 10`, the IP SLA probe (`source-ip 172.21.12.161` $\rightarrow$ `172.21.12.162:80`) always matches the connected `/30` interface route for `Tunnel1`—even when `track 1` is `DOWN` and `0.0.0.0/0` has failed over to `Tunnel2`! This guarantees that each tunnel's health probe never leaks onto another tunnel and automatically detects when the primary tunnel recovers (`delay up 30`).
+     Because `172.21.12.162/30` is directly connected on `Tunnel1` inside `vrf 10`, the IP SLA probe (`source-ip 172.21.12.161` $\rightarrow$ `172.21.12.162:80`) always matches the connected `/30` interface route for `Tunnel1`—even when `track 1` is `DOWN` and `0.0.0.0/0` has failed over to `Tunnel2`! This guarantees that each tunnel's health probe never leaks onto another tunnel and automatically detects when the primary tunnel recovers (`delay up 30`).
   - **Why `track <n> ip sla <n> state` Is Used Instead of `reachability`:**
     In Cisco IOS-XE, if an HTTP probe completes but exceeds the configured `threshold` (`OverThreshold`), `track ... reachability` still considers the probe `UP`, whereas `track ... state` transitions to `DOWN`. Using `track <n> ip sla <n> state` with `timeout 3000` and `threshold 3000` accurately reproduces VeloCloud's `rttThresholdMs: 3000` failover behavior when testing `DEGRADED` latency in `zscaler_orchestrator_pyroute2.py`.
 
-Below is the complete, verified `cEdge` Controller-Mode CLI configuration (`config-transaction` / CLI Add-On Template) for **cEdge Option 2**:
+Below is the complete, verified `cEdge` Controller-Mode CLI configuration (`config-transaction` / CLI Add-On Template) for **`cEdge` Option 2**:
 
 ```cisco
 ! ===========================================================================
@@ -756,8 +761,8 @@ ip route vrf 20 0.0.0.0 0.0.0.0 Tunnel31 172.20.67.66  30 track 31 name ZS-GUEST
 ip route vrf 20 0.0.0.0 0.0.0.0 Tunnel32 172.20.67.70  40 track 32 name ZS-GUEST-SEC-GE2
 ```
 
-#### Alternative for Option 2 (100% Native vManage Feature Template Without CLI Add-On):
-If an organization prohibits **CLI Add-On Templates** in vManage and requires 100% GUI Feature Templates for **cEdge Option 2**, note that Cisco's native Service-VPN `endpoint-tracker` (`tracker-type static-route`) supports TCP/UDP or ICMP probes (not HTTP URLs). In that case, you can configure TCP Port `80` endpoint trackers natively in the vManage System/VPN Feature Template:
+### Alternative for Option 2 (100% Native vManage Feature Template Without CLI Add-On):
+If an organization prohibits **CLI Add-On Templates** in vManage and requires 100% GUI Feature Templates for **`cEdge` Option 2**, note that Cisco's native Service-VPN `endpoint-tracker` (`tracker-type static-route`) supports TCP/UDP or ICMP probes (not HTTP URLs). In that case, you can configure TCP Port `80` endpoint trackers natively in the vManage System/VPN Feature Template:
 ```cisco
 ! Native vManage GUI Feature-Template Alternative for Option 2 (TCP port 80 probe, IOS-XE 17.7+):
 endpoint-tracker ZS-SR-TRACK-1
@@ -774,183 +779,12 @@ ip route vrf 10 0.0.0.0 0.0.0.0 172.21.12.162 10 track name ZS-SR-TRACK-1
 
 ---
 
-## Part 2: Classic / Autonomous Cisco IOS-XE (ISR / ASR / Cat8000 Autonomous Mode)
+## 4. `cEdge` Verification & Default-Route Failover Testing Commands
 
-If the Cisco router is running **Autonomous (non-SD-WAN) IOS-XE**:
-- Configuration is applied in `configure terminal` mode instead of `config-transaction`.
-- Replace `vrf definition 10` / `20` with `vrf definition VRF-TRUSTED` / `vrf definition VRF-GUEST`.
-- **Underlay Pinning in Autonomous Mode:**
-  - If the WAN interfaces (`Gi1` `.64` and `Gi2` `.65`) are in the Global Routing Table, `tunnel route-via GigabitEthernet1 mandatory` and `tunnel route-via GigabitEthernet2 mandatory` are supported in standard IOS-XE 17.x as well.
-  - If the WAN interfaces are placed inside a dedicated Front-Door transport VRF (`vrf definition WAN-VRF-1` for `Gi1` and `vrf definition WAN-VRF-2` for `Gi2`), add **`tunnel vrf WAN-VRF-1`** (on `Tunnel1, 2, 21, 22`) and **`tunnel vrf WAN-VRF-2`** (on `Tunnel11, 12, 31, 32`) under each `interface TunnelX`. Using two separate Front-Door transport VRFs (`WAN-VRF-1` and `WAN-VRF-2`) is the classic IOS-XE way to guarantee that `GE1` and `GE2` tunnels can both reach the same Zscaler destination VIPs (`.240..243`) via the same next-hop (`192.168.1.254`) without ECMP cross-routing!
-- **Two Ways to Steer Default-Route (`0.0.0.0/0`) Traffic Over Both Zscaler Clouds in Autonomous IOS-XE:**
-  1. **Tracked Floating Default Routes per VRF (Dedicated Internet/Zscaler VRFs):**
-     ```cisco
-     ! VRF-TRUSTED (10.23.0.0/24) -> Cloud 1: zscaler.net (.240 / .241)
-     ip route vrf VRF-TRUSTED 0.0.0.0 0.0.0.0 Tunnel1  172.21.12.162 10 track 1  name ZS-PROD-PRI-GE1
-     ip route vrf VRF-TRUSTED 0.0.0.0 0.0.0.0 Tunnel2  172.21.12.166 20 track 2  name ZS-PROD-SEC-GE1
-     ip route vrf VRF-TRUSTED 0.0.0.0 0.0.0.0 Tunnel11 172.21.12.154 30 track 11 name ZS-PROD-PRI-GE2
-     ip route vrf VRF-TRUSTED 0.0.0.0 0.0.0.0 Tunnel12 172.21.12.158 40 track 12 name ZS-PROD-SEC-GE2
+*(Ensure the Ubuntu simulator `CONNMARK` and port `80` `DNAT` rules from [`examples/README.md`](README.md#4-common-ubuntu-simulator-preparation-for-cisco-testing) are active before testing).*
 
-     ! VRF-GUEST (172.16.0.0/24) -> Cloud 2: zscalerbeta.net (.242 / .243)
-     ip route vrf VRF-GUEST   0.0.0.0 0.0.0.0 Tunnel21 172.20.67.74  10 track 21 name ZS-GUEST-PRI-GE1
-     ip route vrf VRF-GUEST   0.0.0.0 0.0.0.0 Tunnel22 172.20.67.78  20 track 22 name ZS-GUEST-SEC-GE1
-     ip route vrf VRF-GUEST   0.0.0.0 0.0.0.0 Tunnel31 172.20.67.66  30 track 31 name ZS-GUEST-PRI-GE2
-     ip route vrf VRF-GUEST   0.0.0.0 0.0.0.0 Tunnel32 172.20.67.70  40 track 32 name ZS-GUEST-SEC-GE2
-     ```
-  2. **VRF-Aware Policy-Based Routing (`route-map`) for Both VRFs (When RFC1918 Uses an Existing MPLS/BGP Default Route):**
-     If either VRF already has an existing `0.0.0.0/0` route pointing toward an internal MPLS/BGP datacenter core and you want all non-RFC1918 internet traffic steered into each VRF's dedicated Zscaler cloud (`zscaler.net` vs. `zscalerbeta.net`):
-     ```cisco
-     ! --- VRF-TRUSTED (10.23.0.0/24) -> Cloud 1: zscaler.net ---
-     ip access-list extended ACL-ZSCALER-TRUSTED
-      10 deny   ip any 10.0.0.0 0.255.255.255
-      20 deny   ip any 172.16.0.0 0.15.255.255
-      30 deny   ip any 192.168.0.0 0.0.255.255
-      40 permit ip 10.23.0.0 0.0.0.255 any
-     !
-     route-map RM-ZSCALER-TRUSTED permit 10
-      match ip address ACL-ZSCALER-TRUSTED
-      set ip vrf VRF-TRUSTED next-hop verify-availability 172.21.12.162 10 track 1
-      set ip vrf VRF-TRUSTED next-hop verify-availability 172.21.12.166 20 track 2
-      set ip vrf VRF-TRUSTED next-hop verify-availability 172.21.12.154 30 track 11
-      set ip vrf VRF-TRUSTED next-hop verify-availability 172.21.12.158 40 track 12
-     !
-     interface GigabitEthernet3.950
-      ip policy route-map RM-ZSCALER-TRUSTED
-     !
-     ! --- VRF-GUEST (172.16.0.0/24) -> Cloud 2: zscalerbeta.net ---
-     ip access-list extended ACL-ZSCALER-GUEST
-      10 deny   ip any 10.0.0.0 0.255.255.255
-      20 deny   ip any 172.16.0.0 0.15.255.255
-      30 deny   ip any 192.168.0.0 0.0.255.255
-      40 permit ip 172.16.0.0 0.0.0.255 any
-     !
-     route-map RM-ZSCALER-GUEST permit 10
-      match ip address ACL-ZSCALER-GUEST
-      set ip vrf VRF-GUEST next-hop verify-availability 172.20.67.74 10 track 21
-      set ip vrf VRF-GUEST next-hop verify-availability 172.20.67.78 20 track 22
-      set ip vrf VRF-GUEST next-hop verify-availability 172.20.67.66 30 track 31
-      set ip vrf VRF-GUEST next-hop verify-availability 172.20.67.70 40 track 32
-     !
-     interface GigabitEthernet3.952
-      ip policy route-map RM-ZSCALER-GUEST
-     ```
-
----
-
-## Part 3: End-to-End Default Route (`0.0.0.0/0`) Architecture in the Ubuntu Simulator & Verification
-
-### 1. How the Lab Simulator Routes `0.0.0.0/0` Internet Traffic Across Both Zscaler Clouds
-
-In the Delft lab setup (`doit.sh`), both network namespaces (`gre1` Primary DC and `gre2` Secondary DC) are configured to terminate and forward actual default-route (`0.0.0.0/0`) internet traffic (ping, DNS, HTTP/HTTPS, speedtests) arriving from **both** segments across **both** Zscaler clouds:
-
-```text
-+-----------------------------------------------------------------------------------+
-|       END-TO-END DEFAULT ROUTE (0.0.0.0/0) FLOW OVER BOTH ZSCALER CLOUDS          |
-+-----------------------------------------------------------------------------------+
-|                                                                                   |
-|  [VPN 10 Client: 10.23.0.14]               [VPN 20 Client: 172.16.0.14]           |
-|       | (Dst: 8.8.8.8)                          | (Dst: 8.8.8.8)                  |
-|       v                                         v                                 |
-|  +-----------------------------------------------------------------------------+  |
-|  | Cisco cEdge / IOS-XE Router                                                 |  |
-|  |  * VRF 10: 0.0.0.0/0 -> Tunnel1/2/11/12 (zscaler.net:     .240 / .241)      |  |
-|  |  * VRF 20: 0.0.0.0/0 -> Tunnel21/22/31/32 (zscalerbeta.net: .242 / .243)    |  |
-|  +-----------------------------------------------------------------------------+  |
-|       | GRE Encapsulated (Outer: .64/.65 -> .240/.241)                            |
-|       |                                         | GRE Encapsulated                |
-|       |                                         | (Outer: .64/.65 -> .242/.243)   |
-|       v                                         v                                 |
-|  +-----------------------------------------------------------------------------+  |
-|  | Ubuntu Simulator Host (192.168.1.57 / br1)                                  |  |
-|  |  * netns gre1 (Primary DC:   .240 zscaler.net & .242 zscalerbeta.net)       |  |
-|  |  * netns gre2 (Secondary DC: .241 zscaler.net & .243 zscalerbeta.net)       |  |
-|  |                                                                             |  |
-|  |  1. Decapsulates GRE packet on gre1/gre11/gre2/gre12 (Cloud 1)              |  |
-|  |     or gre21/gre31/gre22/gre32 (Cloud 2)                                    |  |
-|  |  2. Matches default route inside netns (doit.sh lines 56-57):               |  |
-|  |       ip -n gre1 route add default via 192.168.1.254                        |  |
-|  |       ip -n gre2 route add default via 192.168.1.254                        |  |
-|  |  3. Performs Source NAT (MASQUERADE) on veth-b1 / veth-b2 (lines 192-195):  |  |
-|  |       iptables -t nat -A POSTROUTING -s 10.23.0.0/24  -j MASQUERADE         |  |
-|  |       iptables -t nat -A POSTROUTING -s 172.16.0.0/24 -j MASQUERADE         |  |
-|  +-----------------------------------------------------------------------------+  |
-|       |                                         ^                                 |
-|       | Outbound to Internet                    | Return Route on Upstream Router |
-|       v (Src: 192.168.1.240 in gre1 /           | (192.168.1.240/30 via .1.57     |
-|               192.168.1.241 in gre2)            |  or direct L2 ARP over br1)     |
-|  +-----------------------------------------------------------------------------+  |
-|  | Upstream Lab Internet Gateway (192.168.1.254) -> Internet (8.8.8.8)         |  |
-|  +-----------------------------------------------------------------------------+  |
-+-----------------------------------------------------------------------------------+
-```
-
-#### Upstream Router Return Route Requirement (`192.168.1.254`)
-Because `MASQUERADE` inside `gre1` and `gre2` translates outbound client packets from `10.23.0.0/24` and `172.16.0.0/24` to the namespace's primary `veth` IP (`192.168.1.240` in `gre1` and `192.168.1.241` in `gre2`), ensure the upstream gateway (`192.168.1.254`) can reach `192.168.1.240/30` (either directly via L2 ARP across `br1` or via the static route documented in `doit.sh`):
-```bash
-# On the upstream lab router (192.168.1.254) if L2 bridge ARP is filtered:
-ip route add 192.168.1.240/30 via 192.168.1.57
-```
-
-#### Symmetric Return Routing & GRE Keepalive Return Path in `gre1` and `gre2` Across All 8 Tunnels
-By default, `doit.sh` (lines 140–143) installs static return routes in `gre1` and `gre2` via the **GE1** tunnels (`dev gre1`/`gre2` for `10.23.0.0/24` and `dev gre21`/`gre22` for `172.16.0.0/24`).
-When testing `0.0.0.0/0` default-route failover across **all 8 tunnels** (including when `GE1` fails over to `GE2`, i.e., `Tunnel11`/`gre11`, `Tunnel12`/`gre12`, `Tunnel31`/`gre31`, or `Tunnel32`/`gre32`), run the following block on the Ubuntu simulator after `sudo ./doit.sh`. It enables:
-1. `rp_filter=0` and `accept_local=1` on all 8 GRE interfaces (so Cisco's `keepalive 5 3` packets on all 8 tunnels are forwarded back without RPF drops), and
-2. Stateful `CONNMARK` policy routing (from `doit.sh` lines 154–181) so internet reply packets always return through the **exact GRE tunnel (`gre1..gre32`)** that the session arrived on:
-
-```bash
-# Enable symmetric per-tunnel return routing & GRE keepalive forwarding in netns gre1 (gre1, gre11, gre21, gre31)
-sudo ip netns exec gre1 sysctl -w net.ipv4.ip_forward=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.all.accept_local=1 >/dev/null
-for pair in "gre1:1" "gre11:11" "gre21:21" "gre31:31"; do
-    dev="${pair%%:*}"; mark="${pair##*:}"
-    sudo ip netns exec gre1 sysctl -w net.ipv4.conf.${dev}.rp_filter=0 net.ipv4.conf.${dev}.accept_local=1 >/dev/null
-    sudo ip netns exec gre1 iptables -t mangle -A PREROUTING -i ${dev} -j CONNMARK --set-mark ${mark}
-    sudo ip netns exec gre1 ip rule add fwmark ${mark} table ${mark} 2>/dev/null || true
-    sudo ip netns exec gre1 ip route replace 10.23.0.0/24  dev ${dev} table ${mark}
-    sudo ip netns exec gre1 ip route replace 172.16.0.0/24 dev ${dev} table ${mark}
-done
-sudo ip netns exec gre1 iptables -t mangle -A PREROUTING -i veth-b1 -j CONNMARK --restore-mark
-
-# Enable symmetric per-tunnel return routing & GRE keepalive forwarding in netns gre2 (gre2, gre12, gre22, gre32)
-sudo ip netns exec gre2 sysctl -w net.ipv4.ip_forward=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.all.accept_local=1 >/dev/null
-for pair in "gre2:2" "gre12:12" "gre22:22" "gre32:32"; do
-    dev="${pair%%:*}"; mark="${pair##*:}"
-    sudo ip netns exec gre2 sysctl -w net.ipv4.conf.${dev}.rp_filter=0 net.ipv4.conf.${dev}.accept_local=1 >/dev/null
-    sudo ip netns exec gre2 iptables -t mangle -A PREROUTING -i ${dev} -j CONNMARK --set-mark ${mark}
-    sudo ip netns exec gre2 ip rule add fwmark ${mark} table ${mark} 2>/dev/null || true
-    sudo ip netns exec gre2 ip route replace 10.23.0.0/24  dev ${dev} table ${mark}
-    sudo ip netns exec gre2 ip route replace 172.16.0.0/24 dev ${dev} table ${mark}
-done
-sudo ip netns exec gre2 iptables -t mangle -A PREROUTING -i veth-b2 -j CONNMARK --restore-mark
-```
-
----
-
-### 2. Enabling the 8 `iptables` Port `80` `DNAT` Rules on the Ubuntu Simulator
-
-Both **cEdge Option 1 (`endpoint-tracker`)** and **cEdge Option 2 (`ip sla http raw`)** send their `GET /vpntest` probes **inside the GRE tunnel on TCP Port `80`** toward the `/30` Zscaler IP (`172.21.12.162:80`, etc.).
-After running `sudo ./mknetns-gre1.sh` and `sudo ./doit.sh`, apply these 8 `DNAT` rules on the Ubuntu host so that all 8 inside-the-tunnel port `80` probes are redirected 1-to-1 to the corresponding `zscaler_orchestrator_pyroute2.py` listener ports (`7000–7007`):
-
-```bash
-# In netns gre1 (Primary DC): redirect incoming TCP port 80 probes per GRE tunnel to the matching Orchestrator port
-sudo ip netns exec gre1 iptables -t nat -A PREROUTING -i gre1  -p tcp --dport 80 -j DNAT --to-destination 192.168.1.240:7002
-sudo ip netns exec gre1 iptables -t nat -A PREROUTING -i gre11 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.240:7006
-sudo ip netns exec gre1 iptables -t nat -A PREROUTING -i gre21 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.242:7000
-sudo ip netns exec gre1 iptables -t nat -A PREROUTING -i gre31 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.242:7004
-
-# In netns gre2 (Secondary DC): redirect incoming TCP port 80 probes per GRE tunnel to the matching Orchestrator port
-sudo ip netns exec gre2 iptables -t nat -A PREROUTING -i gre2  -p tcp --dport 80 -j DNAT --to-destination 192.168.1.241:7003
-sudo ip netns exec gre2 iptables -t nat -A PREROUTING -i gre12 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.241:7007
-sudo ip netns exec gre2 iptables -t nat -A PREROUTING -i gre22 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.243:7001
-sudo ip netns exec gre2 iptables -t nat -A PREROUTING -i gre32 -p tcp --dport 80 -j DNAT --to-destination 192.168.1.243:7005
-```
-
----
-
-### 3. Verification & Default-Route Failover Testing Commands
-
-#### A. On the Cisco `cEdge` / IOS-XE CLI
 ```cisco
-! 1. Verify all 8 GRE tunnel interfaces and L3 keepalive status
+! 1. Verify all GRE tunnel interfaces and line-protocol status
 show ip interface brief | include Tunnel
 show interface Tunnel1
 show interface Tunnel21
@@ -970,9 +804,9 @@ show track
 show ip route track-table
 show endpoint-tracker static-route
 
-! 3. Verify active default routes (0.0.0.0/0) per VRF over BOTH Zscaler clouds
-!    - VRF 10 should show 0.0.0.0/0 via Tunnel1 (172.21.12.162, AD 10 -> zscaler.net)
-!    - VRF 20 should show 0.0.0.0/0 via Tunnel21 (172.20.67.74, AD 10 -> zscalerbeta.net)
+! 3. Verify active default routes (0.0.0.0/0) per Service VPN over BOTH Zscaler clouds
+!    - VPN 10 should show 0.0.0.0/0 via Tunnel1 (172.21.12.162, AD 10 -> zscaler.net)
+!    - VPN 20 should show 0.0.0.0/0 via Tunnel21 (172.20.67.74, AD 10 -> zscalerbeta.net)
 show ip route vrf 10 0.0.0.0
 show ip route vrf 20 0.0.0.0
 
@@ -985,22 +819,4 @@ ping vrf 10 8.8.8.8 source GigabitEthernet3.950
 ping vrf 20 8.8.8.8 source GigabitEthernet3.952
 traceroute vrf 10 1.1.1.1 source GigabitEthernet3.950 numeric
 traceroute vrf 20 1.1.1.1 source GigabitEthernet3.952 numeric
-```
-
-#### B. On the Ubuntu Simulator Host (Verifying Separate Zscaler Cloud Paths & Failover)
-```bash
-# 1. Verify VPN 10 (10.23.0.1) default-route traffic arrives on Cloud 1 (zscaler.net: gre1/gre2)
-sudo ip netns exec gre1 tcpdump -ni gre1 icmp
-sudo ip netns exec gre2 tcpdump -ni gre2 icmp
-
-# 2. Verify VPN 20 (172.16.0.1) default-route traffic arrives on Cloud 2 (zscalerbeta.net: gre21/gre22)
-sudo ip netns exec gre1 tcpdump -ni gre21 icmp
-sudo ip netns exec gre2 tcpdump -ni gre22 icmp
-
-# 3. Trigger independent per-cloud failovers in zscaler_orchestrator_pyroute2.py:
-#    - Press [p1] in the orchestrator to fail Cloud 1 Primary (gre1 / port 7002):
-#      -> VRF 10 0.0.0.0/0 fails over from Tunnel1 (gre1) to Tunnel2 (gre2, AD 20)
-#      -> VRF 20 0.0.0.0/0 remains undisturbed on Tunnel21 (gre21, AD 10)!
-#    - Press [g1] in the orchestrator to fail Cloud 2 Primary (gre21 / port 7000):
-#      -> VRF 20 0.0.0.0/0 fails over from Tunnel21 (gre21) to Tunnel22 (gre22, AD 20)!
 ```
