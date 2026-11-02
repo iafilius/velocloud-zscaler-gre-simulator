@@ -102,14 +102,85 @@ On the VeloCloud Edge, Layer 7 health checks are driven by `/opt/vc/sbin/l7_heal
    - **Failure Threshold:** 3 consecutive failed probes (or probes exceeding the `3000 ms` RTT threshold) -> triggers failover from Primary DC (`destId: 0`) to Secondary DC (`destId: 1`) on that WAN link (~10–15 seconds total detection time).
    - **Preemption / Switchback Hold-Down:** Once traffic fails over to the Secondary Zscaler tunnel, VeloCloud expects the Primary tunnel to remain stable for **30 minutes** before steering traffic back to Primary (see Broadcom Issue `79598`).
 
+### Under the Hood: How `l7_health_check.py` and `edged` Cooperate (and Why Probes Appear on `:80` Inside GRE vs. `:7000–7007` Outside GRE)
+
+Why does VeloCloud's `l7_health_check.py` send HTTP probes to synthetic ports `7000`–`7007` when real Zscaler Public Service Edges (ZENs) on the internet only listen on standard HTTP port `80` for `http://gateway.<cloud>/vpntest`?
+
+Inspecting `/opt/vc/sbin/l7_health_check.py` and `/opt/vc/bin/debug.py` on the VeloCloud Edge reveals a **4-step internal multiplexer architecture** between Linux user-space and the `edged` dataplane:
+
+1. **Step 1 — `edged` Exports Active Tunnel Probe Tuples (`--l7_health_checks`):**
+   `l7_health_check.py` queries `/opt/vc/bin/debug.py --l7_health_checks`, which returns a JSON list of tunnel paths to probe. Each entry contains:
+   - `segmentId` (`0` for Enterprise/Trusted, `2` for Guest) and internal source IP `srcIp` (`169.254.3.1` for Segment 0, `169.254.3.3` for Segment 2)
+   - `nvsIp` (the outer Zscaler ZEN VIP, e.g., `192.168.1.240`..`.243`) and `destId` (`0` = Primary, `1` = Secondary)
+   - `nvsLogicalId` (CSS service UUID) and `linkLogicalId` (WAN interface UUID for `GE1` vs. `GE2`)
+   - `dstPort` (`7000`–`7063`): a **synthetic local selector port** allocated by `edged` to uniquely identify that specific `(Segment, CSS Service, WAN Link, Primary/Secondary DC)` tunnel path.
+2. **Step 2 — DNS Resolution of `gateway.<cloud>` & Hash-Table Registration (`--l7_health_check_tbl_add`):**
+   For each entry, `l7_health_check.py` resolves `"gateway." + entry["cloud"]` via DNS (`socket.gethostbyname()`, e.g., `gateway.zscaler.net` $\rightarrow$ `185.46.212.40`) and programs a translation entry into `edged`'s NVS L7 hash table:
+   ```bash
+   /opt/vc/bin/debug.py --l7_health_check_tbl_add \
+       <segmentId> <nvsIp> <nvsLogicalId> <linkLogicalId> \
+       <gateway_dns_ip> <remoteVtepIp> <isMTGRE> <dstPort>
+   ```
+   As noted in VeloCloud's own source code comments:
+   > *"Edge sends the probe with the primary/backup tunnel IP as the destination; `edged` will NAT the destination of the packet to the probe server IP. This is to identify whether the probe should be sent via primary/backup."*
+3. **Step 3 — User-Space `curl` Execution Using `<nvsIp>:<dstPort>` as an Internal Tunnel Selector:**
+   Every **5 seconds**, `l7_health_check.py` spawns `curl` bound to the segment's internal `169.254.3.x` address toward `<nvsIp>:<dstPort>`:
+   ```bash
+   curl --fail --max-time 3 --interface 169.254.3.1 \
+        -H "Host: gateway.zscaler.net" \
+        -H "User-Agent: VMware SD-WAN" \
+        http://192.168.1.240:7002/vpntest
+   ```
+4. **Step 4 — Local JSON-RPC Reporting to `edged` (`l7HealthCheckReport` on `127.0.0.1:26464`):**
+   When `curl` finishes (or times out after 3 seconds), `l7_health_check.py` measures the elapsed RTT in milliseconds, checks that `l7_success == 1` and `rtt_ms < 3000`, and sends a JSON-RPC `l7HealthCheckReport` message to `edged` on `tcp://127.0.0.1:26464` containing `{ "segment_id", "nvs_logical_id", "link_logical_id", "dest_id", "l7_success", "rtt_ms", "is_MTGRE" }`.
+
+#### Why Packet Captures Show Two Different Wire Behaviors (Path A Inside GRE `:80` vs. Path B Outside GRE `:7000–7007`)
+
+When the packet from `curl` (`169.254.3.x -> <nvsIp>:<7000..7007>`) enters the `edged` dataplane, `edged` takes one of **two paths** depending on whether the target GRE tunnel and NVS L7 hash-table entry are active and matched by Business Policy:
+
+```text
++------------------------------------------------------------------------------+
+|         HOW VELOCLOUD EDGED PROCESSES L7 PROBES (PRODUCTION VS. LAB)         |
++------------------------------------------------------------------------------+
+|                                                                              |
+|  1. l7_health_check.py executes every 5s in Linux user-space:                |
+|     curl --interface 169.254.3.1 http://192.168.1.240:7002/vpntest           |
+|                           |                                                  |
+|                           v                                                  |
+|  2. Packet enters edged dataplane:                                           |
+|     +---------------------+---------------------+                            |
+|     |                                           |                            |
+|     v (PATH A) GRE Tunnel UP & L7 Table Matches v (PATH B) GRE Tunnel DOWN,  |
+|     |          (Production CSS / Active Tunnel) |          L7 Table Miss, or |
+|     |                                           |          Defect 134332     |
+|     +-----------------------------------+       +----------------------------+
+|     | * edged matches dstPort 7002      |       | * Packet is NOT steered    |
+|     |   in --l7_health_check_tbl_add    |       |   into the GRE tunnel      |
+|     | * DNAT: 192.168.1.240:7002        |       | * No DNAT to port 80       |
+|     |     --> <gateway.zscaler.net>:80  |       | * Standard Direct WAN SNAT:|
+|     | * SNAT: 169.254.3.1               |       |   169.254.3.1 -> .64/.65   |
+|     |     --> Edge LAN / Tunnel IP      |       | * Exits Edge UNENCAPSULATED|
+|     | * Encapsulates INSIDE GRE tunnel! |       |   on WAN underlay toward:  |
+|     |   (IP Proto 47 -> TCP :80)        |       |   .240..243:7000..7007!    |
+|     +-----------------------------------+       +----------------------------+
++------------------------------------------------------------------------------+
+```
+
+- **Path A — Inside the GRE Tunnel on TCP Port `80` (Production / Active NVS Hash-Table Match):**
+  When the GRE tunnel is `UP`, `gateway.<cloud>` resolved cleanly, and the flow matches `edged`'s `--l7_health_check_tbl_add` table and CSS Business Policy, `edged` uses `dstPort 7000..7007` to select the exact GRE tunnel, **rewrites (DNATs) the destination from `<nvsIp>:700x` to `<gateway.<cloud> DNS IP>:80`**, SNATs the inner source IP to an Edge LAN/tunnel address, and sends `GET /vpntest` **inside the GRE tunnel (`GREv0`) on TCP port `80`**.
+- **Path B — Outside the GRE Tunnel on TCP Ports `7000–7007` (Lab Underlay / Tunnel Down / Defect `134332`):**
+  When the GRE tunnel is not yet established, when the NVS L7 hash-table lookup misses, or when Business Policy steers/leaks the probe to Direct Internet (see Broadcom Defect `134332`), `edged` does **not** encapsulate the packet into GRE and does **not** rewrite `:700x` to `:80`. Instead, it performs standard WAN interface SNAT (`169.254.3.x -> 192.168.1.64/.65`) and transmits the TCP packet **directly on the WAN underlay to `192.168.1.240..243` on ports `7000–7007`**.
+- **Handling Both Paths Simultaneously in the Simulator:**
+  Because `zscaler_orchestrator_pyroute2.py` listens directly on `.240..243:7000..7007` inside `gre1` and `gre2`, it natively answers **Path B** probes out of the box. And by adding the 8 `iptables PREROUTING -i gre* -p tcp --dport 80 -j DNAT --to-destination <VIP>:700x` rules documented in [`ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md`](ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md#tip-2-steering-ciscos-inside-the-tunnel-port-80-vpntest-probes-to-the-python-orchestrator), any **Path A** probe arriving *inside* `gre1`..`gre32` on port `80` (regardless of which `<gateway.<cloud> DNS IP>` `edged` DNATted it to) is transparently redirected to the exact same Python orchestrator port (`7000`–`7007`)!
+
 ---
 
-## 3. Inside-the-Tunnel Monitoring: Cisco-Style GRE Keepalives (`gre-proto-0x0`)
+## 3. Inside-the-Tunnel Monitoring: Cisco-Style GRE Keepalives (`gre-proto-0x0`) & Coupled State Machine
 
-In addition to L7 HTTP probes, GRE tunnels can use **Layer 3 GRE Keepalives** inside the tunnel itself.
+In addition to L7 HTTP probes, VeloCloud's `edged` dataplane originates **Layer 3 GRE Keepalives** every **5.0 seconds** inside every configured GRE tunnel.
 
 ### How GRE Keepalive Encapsulation Works
-A standard Cisco/VeloCloud GRE keepalive packet is a **GRE-in-GRE** packet generated by the tunnel source (`A`) toward the tunnel destination (`B`), where the **inner IP header has reversed source and destination IPs** (`B -> A`) and an inner GRE protocol type of `0x0000`:
+A standard Cisco/VeloCloud GRE keepalive packet is a **GRE-in-GRE** packet generated by the tunnel source (`A`) toward the tunnel destination (`B`), where the **outer IP header uses the WAN underlay IPs** (`192.168.1.64 -> 192.168.1.240`) and the **inner IP header has reversed `/30` tunnel source and destination IPs** (`B -> A`, i.e. `172.21.12.162 -> 172.21.12.161`) with an inner GRE protocol type of `0x0000`:
 
 ![Cisco/VeloCloud GRE-in-GRE Keepalive Packet Anatomy & Reflection](assets/gre-keepalive-packet-anatomy.png)
 
@@ -121,8 +192,8 @@ A standard Cisco/VeloCloud GRE keepalive packet is a **GRE-in-GRE** packet gener
 |       GRE KEEPALIVE PACKET ORIGINATED BY VELOCLOUD EDGE (A -> B)            |
 +-----------------------------------------------------------------------------+
 | Outer IP Header  | GRE Header | Inner IP Header  | Inner GRE Header         |
-| src: 172.21.12.161| proto: IP  | src: 172.21.12.162| proto: 0x0000 (Keepalive)|
-| dst: 172.21.12.162| (0x0800)   | dst: 172.21.12.161| (length 4, empty payload)|
+| src: 192.168.1.64 | proto: IP  | src: 172.21.12.162| proto: 0x0000 (Keepalive)|
+| dst: 192.168.1.240| (0x0800)   | dst: 172.21.12.161| (length 4, empty payload)|
 +-----------------------------------------------------------------------------+
 ```
 
@@ -138,6 +209,25 @@ When the remote GRE endpoint (`B`) decapsulates the outer GRE header, it sees an
 ```
 
 > **Linux `ip_gre` Note (VeloCloud vs. Cisco IOS-XE / Catalyst SD-WAN):** Notice that in VeloCloud's implementation, the inner IP header of the keepalive uses the **inner `/30` tunnel IPs** (`172.21.12.162 > 172.21.12.161`), whereas Cisco IOS-XE / Catalyst SD-WAN (`keepalive 10 3`) uses the **outer WAN IPs** (`192.168.1.240 > 192.168.1.64`). `doit.sh` sets both `accept_local=1` and `rp_filter=0` on `gre*` so the Linux kernel reflects both styles without Martian drops. See **[`ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md`](ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md)** for official Zscaler/Cisco/VeloCloud documentation links and cross-vendor lab notes.
+
+### Interaction & Coupled State Machine Between L3 GRE Keepalives and L7 Health Checks
+
+L3 GRE Keepalives (`gre-proto-0x0`) and L7 HTTP Health Checks (`GET /vpntest`) do not operate in isolation—they are tightly coupled inside `edged`:
+
+1. **Logical `AND` Requirement for Tunnel Health:**
+   - **L3 GRE Keepalive (`edged`):** Every **5.0 seconds**, `edged` sends a `gre-proto-0x0` keepalive across each tunnel (`gre1`..`gre32`). If the remote endpoint stops reflecting `gre-proto-0x0` packets, `edged` marks the underlying NVS GRE path `DOWN` at Layer 3.
+   - **L7 HTTP Probe (`l7_health_check.py` $\rightarrow$ `edged` RPC):** Every **5.0 seconds**, `l7_health_check.py` probes `/vpntest` (3.0s timeout) and reports `l7_success` (`0` or `1`) and `rtt_ms` to `edged` via `l7HealthCheckReport`.
+   - **Combined Verdict:** Both L3 GRE keepalives **AND** L7 HTTP `/vpntest` checks must succeed for `edged` and the VeloCloud Orchestrator (VCO) to consider a Zscaler CSS tunnel healthy (`UP`) and eligible to carry steered user traffic.
+2. **Dynamic Probe List Mutation (Why 8 Probes Can Drop to 4) & the 30-Second Forced Recheck:**
+   - Because `edged` dynamically updates the output of `/opt/vc/bin/debug.py --l7_health_checks` when GRE tunnels transition between `DOWN` and `UP`, the set of active L7 probe ports (`7000`–`7007`) can change at runtime.
+   - For example, when both Trusted (`zscaler.net`) and Guest (`zscalerbeta.net`) segments are enabled across 2 WAN links (8 tunnels total), `edged` may initially export all 8 probe tuples (`7000`–`7007`), or—once primary tunnels stabilize—temporarily prune standby/inactive paths so only 4 probes are actively polled, or shift active probe ports (`7000` $\leftrightarrow$ `7002`) when GRE keepalives bring a tunnel up or down.
+   - Because `edged` does not always emit a configuration-change event when a GRE tunnel changes L3 state, VeloCloud added a forced **`RECHECK_INTERVAL = 30` seconds** timer in `/opt/vc/sbin/l7_health_check.py` (every 6th loop of the 5-second probe timer) with the comment:
+     ```python
+     # Force a recheck every 30s (6 * 5s) regardless of config change
+     # By doing this, we should catch tunnel state transitions that are
+     # not caught via config change
+     ```
+   - Every 30 seconds, `l7_health_check.py` re-runs `/opt/vc/bin/debug.py --l7_health_checks`, re-resolves `gateway.<cloud>`, and re-registers `/opt/vc/bin/debug.py --l7_health_check_tbl_add` for all currently active tunnel paths.
 
 ---
 

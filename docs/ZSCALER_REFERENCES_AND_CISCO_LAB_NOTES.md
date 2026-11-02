@@ -32,7 +32,7 @@ When capturing packets (`tcpdump`) on the WAN underlay or reusing this Linux nam
 | Behavior | VMware VeloCloud SD-WAN Edge | Cisco Catalyst SD-WAN (`cEdge` IOS-XE) |
 | :--- | :--- | :--- |
 | **L3 GRE Keepalive Inner IPs (`gre-proto-0x0`)** | Uses **inner `/30` tunnel IPs** (`src: 172.21.12.162 -> dst: 172.21.12.161`). Reflected packet is routed **back inside the GRE tunnel** (GRE-in-GRE both ways). | Uses **outer WAN IPs** (`src: 192.168.1.240 -> dst: 192.168.1.64`). Reflected packet is forwarded **unencapsulated on the WAN underlay** (`veth-b1`). |
-| **L7 HTTP `/vpntest` Path & Port** | Sent **OUTSIDE the GRE tunnel** on dynamically mapped TCP ports **`7000`–`7063`** directly to the outer Zscaler VIP (`.240`–`.243`). | Sent **INSIDE the GRE tunnel** on standard **TCP Port `80`** (`GET http://gateway.<cloud>/vpntest` via IP SLA / SIG tracker). |
+| **L7 HTTP `/vpntest` Path & Port** | User-space `l7_health_check.py` targets `<VIP>:7000–7063` as an internal tunnel selector for `edged`. When the GRE/NVS hash table matches, `edged` DNATs to `<gateway.<cloud> IP>:80` **INSIDE the GRE tunnel**; when the tunnel is down, misses the table, or hits Defect `134332`, it exits **OUTSIDE the GRE tunnel** on WAN TCP ports **`7000`–`7007`**. | Sent **INSIDE the GRE tunnel** on standard **TCP Port `80`** (`GET http://gateway.<cloud>/vpntest` via IP SLA / SIG tracker). |
 | **Multi-Segment / Multi-VRF Separation** | Maps each Segment to its own CSS / Zscaler Cloud VIP pair so every tunnel has a unique outer `(WAN IP, VIP)` tuple. | Can either share a SIG GRE tunnel across Service VPNs (using Zscaler Sub-Locations by internal `/24` source subnet) or use distinct source WAN IPs / VIPs. |
 
 ---
@@ -83,3 +83,4 @@ sudo ip netns exec gre1 iptables -I FORWARD -i gre1 -p gre -j DROP
 sudo ip netns exec gre1 iptables -D INPUT -i gre1 -p gre -j DROP
 sudo ip netns exec gre1 iptables -D FORWARD -i gre1 -p gre -j DROP
 ```
+

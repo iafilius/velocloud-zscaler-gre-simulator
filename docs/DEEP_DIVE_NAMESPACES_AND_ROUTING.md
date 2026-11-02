@@ -81,13 +81,15 @@ When `mknetns-gre1.sh` detects `macvlan` interfaces on `enp0s25` (even inside ot
 
 ## 3. Kernel Sysctls Inside the Namespaces (`doit.sh`)
 
-Three kernel parameters set in `doit.sh` are essential for the simulator to forward traffic properly:
+Four kernel parameters set in `doit.sh` (lines 201–236) are essential for the simulator to forward user traffic and reflect GRE keepalives properly:
 
 1. **`net.ipv4.ip_forward=1` (in `gre1` and `gre2`):**
-   Allows packets decapsulated from the GRE tunnel interfaces (`gre1`..`gre32`) to be routed out via `veth-b1`/`veth-b2` toward the upstream internet gateway (`192.168.1.254`).
+   Allows packets decapsulated from the GRE tunnel interfaces (`gre1`..`gre32`)—both steered client packets and reflected GRE keepalives—to be routed back out by the kernel.
 2. **`net.ipv4.conf.all.accept_local=1` and `net.ipv4.conf.default.accept_local=1`:**
-   Allows the namespace kernel stack to accept packets whose source IP matches a local address when testing or hair-pinning between local interfaces on the same host.
-3. **`net.ipv4.conf.br1.proxy_arp=1` and `net.ipv4.conf.enp0s25.proxy_arp=1`:**
+   Required for GRE keepalive reflection (`gre-proto-0x0`). When the VeloCloud Edge sends a GRE-in-GRE keepalive toward `gre1` (e.g., outer `192.168.1.64 -> 192.168.1.240`), the encapsulated **inner IP header** has its source and destination reversed (`src: 172.21.12.162 -> dst: 172.21.12.161`). Once `gre1` decapsulates the outer header, the inner packet appears to arrive from `172.21.12.162`—which is the simulator's **own local `/30` IP address** configured on `gre1`! Without `accept_local=1`, the Linux kernel immediately drops the decapsulated keepalive because its source IP is local to the receiving namespace.
+3. **`net.ipv4.conf.{all,default,gre*}.rp_filter=0`:**
+   Disables strict Reverse Path Forwarding (RPF) validation on the GRE interfaces so neither VeloCloud inner `/30` keepalives nor Cisco outer-VIP keepalives (`src: 192.168.1.240 -> dst: 192.168.1.64` arriving on `gre1` while `.240` lives on `veth-b1`) are dropped as Martian sources.
+4. **`net.ipv4.conf.br1.proxy_arp=1` and `net.ipv4.conf.enp0s25.proxy_arp=1`:**
    Helps with ARP resolution on the `192.168.1.0/24` LAN segment for the `.240`–`.243` VIPs living behind `br1`.
 
 > **Important Note on Upstream Gateway Return Traffic:**
@@ -162,6 +164,20 @@ ip netns exec gre1 ip route add 172.16.0.0/24 dev gre31 table 131
 Instead of grouping 4 tunnels into `gre1` and 4 tunnels into `gre2`, you can create **8 network namespaces** (`prod-pri-ge1`, `prod-pri-ge2`, `guest-pri-ge1`, `guest-pri-ge2`, etc.), each with 1 `veth` pair, 1 GRE tunnel, and 1 static route.
 - **Pros:** Zero policy routing needed; 1:1 mapping with the 8 orchestrator listener threads; trivial routing table per namespace.
 - **Cons:** Requires 8 distinct Zscaler VIPs (or L2/ebtables steering per source Edge WAN IP) because two namespaces on the same bridge cannot claim the same `192.168.1.240` IP without ARP conflicts.
+
+### Why L3 GRE Keepalives (`gre-proto-0x0`) Always Reflect Symmetrically Across Dual-WAN (`GE1` + `GE2`)
+An important distinction exists between **backhauled client LAN traffic (`10.23.0.0/24` and `172.16.0.0/24`)** and **VeloCloud L3 GRE Keepalives (`gre-proto-0x0`)**:
+- Client LAN traffic arriving in `gre1` over `GE1` (`gre1`/`gre21`) and `GE2` (`gre11`/`gre31`) shares the **same source subnet** (`10.23.0.0/24` or `172.16.0.0/24`), which is why client return traffic needs Option 2 (`CONNMARK` tables `101/111/121/131`) if you require per-WAN return symmetry.
+- **VeloCloud L3 GRE Keepalives, however, are 100% symmetric out of the box even with Option 1!** Why? Because in `doit.sh` (lines 63–100), every single GRE tunnel is configured with its own **unique `/30` inner point-to-point subnet and explicit `peer` address**:
+  ```bash
+  # inside netns gre1 (Primary DC):
+  ip -n gre1 addr add 172.21.12.162/30 peer 172.21.12.161 dev gre1   # Prod GE1
+  ip -n gre1 addr add 172.21.12.154/30 peer 172.21.12.153 dev gre11  # Prod GE2
+  ip -n gre1 addr add 172.20.67.74/30  peer 172.20.67.73  dev gre21  # Guest GE1
+  ip -n gre1 addr add 172.20.67.66/30  peer 172.20.67.65  dev gre31  # Guest GE2
+  ```
+- The Linux kernel automatically installs a dedicated connected `/32` route for each `peer` IP (`172.21.12.161 dev gre1`, `172.21.12.153 dev gre11`, `172.20.67.73 dev gre21`, `172.20.67.65 dev gre31`) in `gre1`'s `main` routing table (and similarly for `gre2`, `gre12`, `gre22`, `gre32` inside `gre2`).
+- When a GRE keepalive arrives on `gre11` from `GE2` (`outer: .65 -> .240`, `inner: 172.21.12.154 -> 172.21.12.153`), `accept_local=1` + `rp_filter=0` allow the packet in, `ip_forward=1` forwards it, and the connected kernel route `172.21.12.153 dev gre11` sends the reflected keepalive **straight back out `gre11` to `GE2` (`.65`)**.
 
 ---
 
