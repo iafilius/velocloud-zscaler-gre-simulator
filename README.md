@@ -24,6 +24,7 @@ Using **Linux Network Namespaces (`gre1` and `gre2`)**, a **MAC-preserving Linux
 - **[`docs/DEEP_DIVE_NAMESPACES_AND_ROUTING.md`](docs/DEEP_DIVE_NAMESPACES_AND_ROUTING.md)** — In-depth explanation of why and how Linux Network Namespaces, `veth` pairs, MAC-preserving bridging, `accept_local=1`, `proxy_arp`, `setns()`, and the 3 return-path routing architectures work.
 - **[`docs/DEEP_DIVE_L7_VS_GRE_HEALTHCHECKS.md`](docs/DEEP_DIVE_L7_VS_GRE_HEALTHCHECKS.md)** — Anatomy of VeloCloud **outside-the-tunnel** L7 HTTP health checks (`GET /vpntest`) vs. **inside-the-tunnel** L3 GRE keepalives and user traffic, Edge CLI diagnostics (`/opt/vc/bin/debug.py --l7_health_checks`), and firmware observations.
 - **[`docs/ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md`](docs/ZSCALER_REFERENCES_AND_CISCO_LAB_NOTES.md)** — Curated official Zscaler, Broadcom (VeloCloud), and Cisco Catalyst SD-WAN GRE deployment guide links, plus wire-level behavioral deltas (`cEdge` vs. VeloCloud) and Linux simulator tips (`rp_filter=0`, port `80` `DNAT` inside-tunnel probing).
+- **[`examples/cisco_zscaler_gre_lab_configs.md`](examples/cisco_zscaler_gre_lab_configs.md)** — Complete, YANG-validated **Cisco Catalyst SD-WAN (`cEdge` IOS-XE 17.9+/17.12+)** and **Autonomous IOS-XE** configurations mapped 1-to-1 onto this 8-tunnel dual-Zscaler-cloud lab simulator (`Option 1: service sig vrf global` vs. `Option 2: Per-Service-VPN 8-tunnel GRE`).
 - **[`CHANGELOG.md`](CHANGELOG.md)** — Evolution from 4-tunnel single-WAN to 8-tunnel dual-WAN (`GE1` + `GE2`) simulation.
 
 ---
