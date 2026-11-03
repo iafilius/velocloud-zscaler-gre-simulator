@@ -57,16 +57,16 @@ When reviewing this configuration with Cisco IOS-XR specialists, note four **ver
 
 ### 0.3 Cisco IOS-XR YANG Data Model & Transactional (`commit`) Compliance
 
-Every configuration block in this guide maps 1-to-1 to Cisco IOS-XR's native YANG data models and is validated atomically when `commit` is executed:
+Every configuration block in this guide has been directly verified against the official Cisco IOS-XR `7.11.2` `.yang` source files in [`YangModels/yang/vendor/cisco/xr/7112`](https://github.com/YangModels/yang/tree/main/vendor/cisco/xr/7112)—covering both the **Unified Model (`Cisco-IOS-XR-um-*-cfg.yang`)** (which maps 1-to-1 to the IOS-XR CLI hierarchy) and the **Native Package Model (`Cisco-IOS-XR-*-cfg.yang`)**:
 
-| Architectural Component | Cisco IOS-XR YANG Module (`7.x` / `24.x`) | Canonical YANG Container / XPath |
+| Architectural Component | Official IOS-XR Unified Model (`um`) & Native YANG Modules (`7.11.2`) | Verified Unified Model (`um`) & Native YANG XPaths |
 | :--- | :--- | :--- |
-| **Front-Door Transport VRFs (`fVRF`) & Tenant VRFs (`iVRF`)** | `Cisco-IOS-XR-infra-rsi-cfg.yang` | `/vrfs/vrf[vrf-name='WAN-VRF-GE1'\|'WAN-VRF-GE2'\|'VRF-TRUSTED'\|'VRF-GUEST']/afs/af` |
-| **Physical Interfaces, 802.1Q Sub-Interfaces & `tunnel-ip` Creation** | `Cisco-IOS-XR-ifmgr-cfg.yang`<br>`Cisco-IOS-XR-l2-eth-infra-cfg.yang`<br>`Cisco-IOS-XR-ipv4-io-cfg.yang` | `/interface-configurations/interface-configuration[interface-name='tunnel-ip1'\|...]`<br>`.../vrf`, `.../mtus/mtu`, `.../ipv4-network/addresses/primary` |
-| **GRE Encapsulation, Source/Destination & `tunnel vrf` Binding** | `Cisco-IOS-XR-tunnel-gre-cfg.yang` (augments `Cisco-IOS-XR-ifmgr-cfg`) | `/interface-configurations/interface-configuration/tunnel-ip/mode` (`gre-ipv4`)<br>`.../tunnel-ip/source`, `.../tunnel-ip/destination`, `.../tunnel-ip/vrf` |
-| **VRF-Aware IP SLA Operations & Schedules (`ipsla`)** | `Cisco-IOS-XR-man-ipsla-cfg.yang` | `/ipsla/operation/operations/operation[operation-id='1']/operation-type/icmp-echo`<br>`/ipsla/schedule/schedules/schedule[operation-id='1']` |
-| **Object Tracking (`track <name> -> type rtr <id> reachability`)** | `Cisco-IOS-XR-manageability-object-tracking-cfg.yang` | `/object-trackings/object-tracking[track-name='TRACK-TUN1']/type-rtr`<br>`.../delay-up`, `.../delay-down` |
-| **Tracked Floating Static Default Routes (`router static`)** | `Cisco-IOS-XR-ip-static-cfg.yang` | `/router-static/vrfs/vrf[vrf-name='VRF-TRUSTED'\|'VRF-GUEST']/address-family/vrfipv4/vrf-unicast/vrf-prefixes/vrf-prefix` |
+| **Front-Door Transport VRFs (`fVRF`) & Tenant VRFs (`iVRF`)** | **UM:** `Cisco-IOS-XR-um-vrf-cfg.yang` (line 211)<br>**Native:** `Cisco-IOS-XR-infra-rsi-cfg.yang` (line 535) | **UM:** `/vrfs/vrf[vrf-name='...']/address-family/ipv4/unicast`<br>**Native:** `/vrfs/vrf[vrf-name='...']/afs/af[af-name='ipv4'][saf-name='unicast']` |
+| **Physical Interfaces, 802.1Q Sub-Interfaces & `tunnel-ip` Creation** | **UM:** `Cisco-IOS-XR-um-interface-cfg.yang` (line 225)<br>`Cisco-IOS-XR-um-if-vrf-cfg.yang`<br>`Cisco-IOS-XR-um-l2-ethernet-cfg.yang`<br>**Native:** `Cisco-IOS-XR-ifmgr-cfg.yang`, `Cisco-IOS-XR-l2-eth-infra-cfg.yang`, `Cisco-IOS-XR-ipv4-io-cfg.yang` | **UM:** `/interfaces/interface[interface-name='tunnel-ip1'\|...]` (`vrf`, `mtu`, `ipv4/addresses/address`, `encapsulation/dot1q/vlan-id`)<br>**Native:** `/interface-configurations/interface-configuration[interface-name='tunnel-ip1'\|...]` (`vrf`, `mtus/mtu`, `ipv4-network/addresses/primary`) |
+| **GRE Encapsulation (`tunnel mode gre ipv4`), Source/Destination & `tunnel vrf` Binding** | **UM:** `Cisco-IOS-XR-um-if-tunnel-cfg.yang` (lines 147, 198, 294, 491)<br>**Native:** `Cisco-IOS-XR-tunnel-gre-cfg.yang` (lines 84–318) | **UM:** `/interfaces/interface/tunnel/mode/gre/ipv4`<br>`.../tunnel/source/interface-name`, `.../tunnel/destination/ipv4-address`, `.../tunnel/vrf`<br>**Native:** `/interface-configurations/interface-configuration/tunnel-ip/mode` (`value=1`), `.../source`, `.../destination`, `.../vrf` |
+| **VRF-Aware IP SLA Operations & Schedules (`ipsla`)** | **UM:** `Cisco-IOS-XR-um-ipsla-cfg.yang` (lines 56, 82, 1581)<br>**Native:** `Cisco-IOS-XR-man-ipsla-cfg.yang` (lines 1709, 1949) | **UM:** `/ipsla/operations/operation[operation-number='1']/type/icmp/echo` (`vrf`, `source/address/ipv4-address`, `destination/address/ipv4-address`, `timeout`, `frequency`) & `/ipsla/schedule/operations/operation[operation-number='1']` (`start-time/now`, `life/forever`)<br>**Native:** `/ipsla/operation/definitions/definition[operation-id='1']/operation-type/icmp-echo` & `/ipsla/operation/schedules/schedule[operation-id='1']` |
+| **Object Tracking (`track <name> -> type rtr <id> reachability`)** | **UM:** `Cisco-IOS-XR-um-track-cfg.yang` (lines 79–225)<br>**Native:** `Cisco-IOS-XR-manageability-object-tracking-cfg.yang` (lines 127–465) | **UM:** `/tracks/track[track-name='TRACK-TUN1']/type/rtr` + `.../delay/up` + `.../delay/down`<br>**Native:** `/object-trackings/object-tracking[track-name='TRACK-TUN1']/type-rtr/rtr` + `.../delay-up` + `.../delay-down` |
+| **Tracked Floating Static Default Routes (`router static`)** | **UM:** `Cisco-IOS-XR-um-router-static-cfg.yang` (lines 7133, 7612)<br>**Native:** `Cisco-IOS-XR-ip-static-cfg.yang` (lines 102–546; *note: deprecated in XR 7.x in favor of `um-router-static-cfg`*) | **UM:** `/router/static/vrfs/vrf[vrf-name='...']/address-family/ipv4/unicast/prefixes/prefix[prefix-address='0.0.0.0'][prefix-length='0']/nexthop-interface-addresses/nexthop-interface-address[interface-name][address]` (`distance-metric`, `track`, `description`)<br>**Native:** `/router-static/vrfs/vrf[vrf-name='...']/address-family/vrfipv4/vrf-unicast/vrf-prefixes/vrf-prefix` |
 
 ---
 
@@ -528,3 +528,4 @@ ping vrf VRF-GUEST   8.8.8.8 source 172.16.0.1
 traceroute vrf VRF-TRUSTED 1.1.1.1 source 10.23.0.1 numeric
 traceroute vrf VRF-GUEST   1.1.1.1 source 172.16.0.1 numeric
 ```
+

@@ -49,14 +49,14 @@
 
 ### 0.3 Viptela OS YANG Data Model & Transactional (`commit`) Compliance
 
-On `vEdge` routers, the onboard ConfD engine validates all configuration statements against Viptela's native YANG data models (`viptela-*.yang`):
+On `vEdge` routers, the onboard ConfD engine validates all configuration statements against Viptela's native on-box YANG data models (`viptela-system.yang` under namespace `http://viptela.com/system` and `viptela-vpn.yang` under namespace `http://viptela.com/vpn`, shipped inside the Viptela OS / vManage YANG schema bundle):
 
-| Architectural Component | Viptela OS YANG Module (`20.x`) | Canonical YANG Container / XPath |
+| Architectural Component | On-Box Viptela OS YANG Module (`20.x`) | Canonical YANG Container / XPath |
 | :--- | :--- | :--- |
-| **System L7 `/vpntest` Trackers (`system -> tracker`)** | `viptela-system.yang` | `/system/tracker[name='ZS-TRACK-TUN1']/endpoint-api-url`<br>`.../interval`, `.../threshold`, `.../multiplier`, `.../tracker-type` |
-| **Transport VPN 0, WAN Interfaces (`ge0/0`, `ge0/1`) & GRE Tunnels (`gre1..32`)** | `viptela-vpn.yang` | `/vpn/vpn-instance[vpn-id='0']/interface[if-name='gre1']/tunnel-interface-gre`<br>`.../tunnel-source-interface`, `.../tunnel-destination`, `.../tracker`, `.../keepalive` |
-| **Transport VPN 0 Native `service sig` (`Option 1`)** | `viptela-vpn.yang` | `/vpn/vpn-instance[vpn-id='0']/service[svc-type='sig']/ha-pairs/interface-pair` |
-| **Service VPNs (`vpn 10` & `vpn 20`), `ip service-route` & `ip gre-route`** | `viptela-vpn.yang` | `/vpn/vpn-instance[vpn-id='10'\|'20']/ip/service-route`<br>`/vpn/vpn-instance[vpn-id='10'\|'20']/ip/gre-route` |
+| **System L7 `/vpntest` Trackers (`system -> tracker`)** | `viptela-system.yang` (`http://viptela.com/system`) | `/system/tracker[name='ZS-TRACK-TUN1']/endpoint-api-url`<br>`.../interval`, `.../threshold`, `.../multiplier`, `.../tracker-type` |
+| **Transport VPN 0, WAN Interfaces (`ge0/0`, `ge0/1`) & GRE Tunnels (`gre1..32`)** | `viptela-vpn.yang` (`http://viptela.com/vpn`) | `/vpn/vpn-instance[vpn-id='0']/interface[if-name='gre1']`<br>`.../tunnel-source-interface`, `.../tunnel-destination`, `.../tracker`, `.../keepalive`, `.../clear-dont-fragment` |
+| **Transport VPN 0 Native `service sig` (`Option 1`)** | `viptela-vpn.yang` (`http://viptela.com/vpn`) | `/vpn/vpn-instance[vpn-id='0']/service[svc-type='sig']/ha-pairs/interface-pair` |
+| **Service VPNs (`vpn 10` & `vpn 20`), `ip service-route` & `ip gre-route`** | `viptela-vpn.yang` (`http://viptela.com/vpn`) | `/vpn/vpn-instance[vpn-id='10'\|'20']/ip/service-route`<br>`/vpn/vpn-instance[vpn-id='10'\|'20']/ip/gre-route` |
 
 ---
 
@@ -437,3 +437,4 @@ ping vpn 20 8.8.8.8 source 172.16.0.1
 traceroute vpn 10 1.1.1.1 source 10.23.0.1
 traceroute vpn 20 1.1.1.1 source 172.16.0.1
 ```
+

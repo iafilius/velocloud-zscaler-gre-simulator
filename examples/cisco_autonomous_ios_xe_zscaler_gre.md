@@ -52,16 +52,18 @@
 
 ### 0.3 Cisco IOS-XE YANG Data Model Compliance (`Cisco-IOS-XE-native.yang`)
 
-Even in Autonomous Mode (`configure terminal`), modern IOS-XE 16.12+ / 17.x routers support NETCONF/RESTCONF programmable automation backed by `Cisco-IOS-XE-native.yang`:
+Even in Autonomous Mode (`configure terminal`), modern IOS-XE 16.12+ / 17.x routers support NETCONF/RESTCONF programmable automation backed by `Cisco-IOS-XE-native.yang` and its submodules in [`YangModels/yang/vendor/cisco/xe/17121`](https://github.com/YangModels/yang/tree/main/vendor/cisco/xe/17121). Every configuration block in this guide has been directly verified against the official Cisco IOS-XE `17.12.1` `.yang` source files:
 
-| Architectural Component | Cisco IOS-XE YANG Module (`16.12+` / `17.x`) | Canonical YANG Data Node / XPath (`Cisco-IOS-XE-native`) |
+| Architectural Component | Official Cisco IOS-XE `17.12.1` YANG Module | Verified YANG Data Node / XPath (`Cisco-IOS-XE-native`) |
 | :--- | :--- | :--- |
-| **Front-Door Transport VRFs (`fVRF`) & Service VRFs (`iVRF`)** | `Cisco-IOS-XE-vrf.yang` | `/native/vrf/definition[name='WAN-VRF-GE1'\|'WAN-VRF-GE2'\|'VRF-TRUSTED'\|'VRF-GUEST']`<br>`/native/interface/GigabitEthernet/vrf/forwarding` |
-| **GRE Tunnel Encapsulation & Front-Door VRF Binding (`tunnel vrf`)** | `Cisco-IOS-XE-tunnel.yang`<br>`Cisco-IOS-XE-interfaces.yang` | `/native/interface/Tunnel/vrf/forwarding`<br>`/native/interface/Tunnel/tunnel/source`<br>`/native/interface/Tunnel/tunnel/destination`<br>`/native/interface/Tunnel/tunnel/mode/gre/ipv4`<br>`/native/interface/Tunnel/tunnel/vrf` (or `route-via`) |
-| **VRF-Aware L7 HTTP `/vpntest` Probes (`ip sla http raw`)** | `Cisco-IOS-XE-sla.yang` | `/native/ip/sla/entry/http/raw-request`<br>`/native/ip/sla/entry/http/raw-request/vrf`<br>`/native/ip/sla/entry/http/raw-request/http-raw-request`<br>`/native/ip/sla/schedule` |
-| **Object Tracking (`track <id> ip sla <id> state`)** | `Cisco-IOS-XE-track.yang` | `/native/track/tracked-object/ip/sla/state`<br>`/native/track/tracked-object/delay` |
-| **Tracked Floating Default Routes (`0.0.0.0/0` per VRF)** | `Cisco-IOS-XE-ip.yang` | `/native/ip/route/vrf/ip-route-interface-forwarding-list` |
-| **VRF-Aware Policy-Based Routing (`route-map` + `verify-availability`)** | `Cisco-IOS-XE-route-map.yang`<br>`Cisco-IOS-XE-acl.yang` | `/native/route-map/route-map-without-order-seq/set/ip/vrf/next-hop-verify-availability` |
+| **Front-Door Transport VRFs (`fVRF`) & Service VRFs (`iVRF`)** | `Cisco-IOS-XE-native.yang` (line 2458, via submodule `Cisco-IOS-XE-ip.yang` line 1344)<br>`Cisco-IOS-XE-interfaces.yang` (line 4496) | `/native/vrf/definition[name='WAN-VRF-GE1'\|'WAN-VRF-GE2'\|'VRF-TRUSTED'\|'VRF-GUEST']/address-family/ipv4`<br>`/native/interface/GigabitEthernet/vrf-choice/vrf/vrf/forwarding` |
+| **GRE Tunnel Encapsulation (`tunnel mode gre ip`) & Front-Door VRF Binding (`tunnel vrf`)** | `Cisco-IOS-XE-tunnel.yang` (lines 280, 288, 649, 1184, 1242)<br>`Cisco-IOS-XE-interfaces.yang` (lines 2332, 4496) | `/native/interface/Tunnel/vrf-choice/vrf/vrf/forwarding`<br>`/native/interface/Tunnel/tunnel/source`<br>`/native/interface/Tunnel/tunnel/destination-config/ipv4`<br>`/native/interface/Tunnel/tunnel/mode/gre-config/ip`<br>`/native/interface/Tunnel/tunnel/vrf-config/vrf-common/vrf` *(or `route-via/interface` + `mandatory`)*<br>`/native/interface/Tunnel/ip/tcp/adjust-mss` |
+| **VRF-Aware L7 HTTP `/vpntest` Probes (`ip sla http raw`)** | `Cisco-IOS-XE-sla.yang` (lines 3753, 3826, 3918, 3951) | `/native/ip/sla/entry[number]/http/raw/url`, `source-ip`, `cache`<br>`/native/ip/sla/entry[number]/http/vrf`<br>`/native/ip/sla/entry[number]/http/http-raw-request/raw-request-string`<br>`/native/ip/sla/schedule[entry-number]/life` + `start-time` |
+| **Object Tracking (`track <id> ip sla <id> state`)** | `Cisco-IOS-XE-track.yang` (lines 128, 395–412) | `/native/track/tracked-object[object-number]/ip/sla/number` + `state-sla`<br>`/native/track/tracked-object[object-number]/delay/down` + `up` |
+| **Tracked Floating Default Routes (`0.0.0.0/0` per VRF)** | `Cisco-IOS-XE-ip.yang` (lines 1800–2135, 3546) | `/native/ip/route/vrf[name]/ip-route-interface-forwarding-list[prefix][mask]/fwd-list[fwd]/interface-next-hop[ip-address]` (`metric`, `track-id-name/id`, `name`) |
+| **VRF-Aware Policy-Based Routing (`route-map` + `verify-availability`)** | `Cisco-IOS-XE-route-map.yang` (lines 1242–1356)<br>`Cisco-IOS-XE-acl.yang` | `/native/route-map[name]/route-map-without-order-seq[seq_no]/set/ip/vrf/vrfs[vrf]/verify-availability/ipv4[ipv4]` (`range`, `track`) |
+
+> **Note on `Cisco-IOS-XE-ip.yang` vs. `Cisco-IOS-XE-vrf-oper.yang`:** In the official `YangModels/yang/vendor/cisco/xe/17121` schema tree, `vrf definition` is modeled inside the `Cisco-IOS-XE-ip.yang` submodule (line 1344, included by `Cisco-IOS-XE-native.yang` line 2458) rather than a standalone `Cisco-IOS-XE-vrf.yang` config module (only `Cisco-IOS-XE-vrf-oper.yang` exists as a separate file).
 
 ---
 
@@ -524,3 +526,4 @@ ping vrf VRF-GUEST   8.8.8.8 source GigabitEthernet3.952
 traceroute vrf VRF-TRUSTED 1.1.1.1 source GigabitEthernet3.950 numeric
 traceroute vrf VRF-GUEST   1.1.1.1 source GigabitEthernet3.952 numeric
 ```
+
